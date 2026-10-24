@@ -15,6 +15,7 @@
     "carve-rough": { mode: "outline", detail: 27, threshold: 28, smoothing: 5, simplify: 2.8, lineWidth: 2.8, innerLines: false, hatching: false, keepMain: true },
     "carve-fine": { mode: "lineart", detail: 58, threshold: 22, smoothing: 2, simplify: 1.2, lineWidth: 1.4, innerLines: true, hatching: false, keepMain: true },
     pyro: { mode: "lineart", detail: 68, threshold: 18, smoothing: 1, simplify: .8, lineWidth: 1, innerLines: true, hatching: true, keepMain: false },
+    document: { mode: "lineart", detail: 72, threshold: 14, smoothing: 0, simplify: .5, lineWidth: 1, innerLines: true, hatching: false, keepMain: false, preserveDetails: true },
     stencil: { mode: "stencil", detail: 22, threshold: 26, smoothing: 4, simplify: 2.4, lineWidth: 3, innerLines: false, hatching: false, keepMain: true, autoBridges: true }
   };
 
@@ -128,6 +129,7 @@
       simplify: Number($("#simplify").value), detail: Number($("#detail").value), lineWidth: Number($("#lineWidth").value),
       removeBackground: $("#removeBackground").checked, keepMain: $("#keepMain").checked,
       innerLines: $("#innerLines").checked, hatching: $("#hatching").checked, invertSource: $("#invertSource").checked,
+      preserveDetails: $("#preserveDetails").checked,
       autoBridges: $("#autoBridges").checked,
       close: Math.max(0, Math.round(Number($("#smoothing").value) / 2)), minArea: Math.max(3, Math.round(minPixels * minPixels * .18)),
       bridgePixels: Math.max(1, Math.round(Number($("#minBridgeMm").value) / Math.max(.001, mmPerPixel)))
@@ -538,7 +540,9 @@
     const preset = presets[name]; if (!preset) return;
     state.mode = preset.mode;
     for (const key of ["detail", "threshold", "smoothing", "simplify", "lineWidth"]) { $(`#${key}`).value = preset[key]; updateRangeLabel(key); }
-    for (const key of ["innerLines", "hatching", "keepMain", "autoBridges"]) $(`#${key}`).checked = Boolean(preset[key]);
+    for (const key of ["innerLines", "hatching", "keepMain", "autoBridges", "preserveDetails"]) {
+      if (Object.hasOwn(preset, key)) $(`#${key}`).checked = Boolean(preset[key]);
+    }
     $$('[data-mode]').forEach((button) => button.classList.toggle("active", button.dataset.mode === state.mode)); scheduleProcess();
   }
 
@@ -559,7 +563,7 @@
   $("#preset").addEventListener("change", (event) => applyPreset(event.target.value));
   $$('[data-mode]').forEach((button) => button.addEventListener("click", () => { state.mode = button.dataset.mode; $$('[data-mode]').forEach((item) => item.classList.toggle("active", item === button)); $("#preset").value = "custom"; scheduleProcess(); }));
   for (const id of ["detail", "threshold", "smoothing", "simplify", "lineWidth"]) $(`#${id}`).addEventListener("input", () => { updateRangeLabel(id); $("#preset").value = "custom"; scheduleProcess(); });
-  for (const id of ["removeBackground", "keepMain", "innerLines", "hatching", "autoBridges", "invertSource"]) $(`#${id}`).addEventListener("change", () => { $("#preset").value = "custom"; scheduleProcess(); });
+  for (const id of ["removeBackground", "keepMain", "innerLines", "hatching", "autoBridges", "preserveDetails", "invertSource"]) $(`#${id}`).addEventListener("change", () => { $("#preset").value = "custom"; scheduleProcess(); });
   for (const id of ["minDetailMm", "minBridgeMm"]) $(`#${id}`).addEventListener("change", () => scheduleProcess());
 
   $("#widthMm").addEventListener("input", updateLockedHeight); $("#heightMm").addEventListener("input", updateLockedWidth);

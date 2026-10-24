@@ -66,4 +66,24 @@ function image(width, height, pixel) {
   assert.ok(simplified.length > 2 && simplified.length < points.length, "Lange Kontur wurde nicht stack-sicher vereinfacht");
 }
 
-console.log("Outlines core: 6 Tests erfolgreich.");
+{
+  const width = 120, height = 80;
+  const data = image(width, height, (x, y) => {
+    const main = x >= 8 && x < 38 && y >= 25 && y < 58;
+    const letter = x >= 55 && x < 95 && y >= 16 && y < 27 && ((x - 55) % 8 < 4 || y > 22);
+    return main ? [10, 10, 10, 255] : letter ? [185, 20, 35, 255] : [250, 250, 248, 255];
+  });
+  const settings = { mode: "outline", blur: 0, threshold: 15, keepMain: true, close: 0, minArea: 12, simplify: .3, innerLines: true, removeBackground: true };
+  const reduced = Core.processImage({ width, height, data, settings: { ...settings, preserveDetails: false } });
+  const detailed = Core.processImage({ width, height, data, settings: { ...settings, preserveDetails: true } });
+  const reducedInk = reduced.mask.reduce((sum, value) => sum + value, 0);
+  const detailedInk = detailed.mask.reduce((sum, value) => sum + value, 0);
+  assert.ok(detailedInk > reducedInk, "Kleine Schriftkomponenten werden nicht zusätzlich erhalten");
+  let reducedTextInk = 0, detailedTextInk = 0;
+  for (let y = 10; y < 32; y++) for (let x = 50; x < 102; x++) {
+    reducedTextInk += reduced.mask[y * width + x]; detailedTextInk += detailed.mask[y * width + x];
+  }
+  assert.ok(detailedTextInk > reducedTextInk, "Schriftbereich fehlt in der Detailausgabe");
+}
+
+console.log("Outlines core: 7 Tests erfolgreich.");

@@ -346,18 +346,20 @@
 
   function processImage(payload) {
     const { width, height, data } = payload;
-    const settings = Object.assign({ mode: "outline", blur: 2, threshold: 22, highThreshold: 38, close: 1, simplify: 1.5, detail: 45, lineWidth: 1, keepMain: true, removeBackground: true, invertSource: false, innerLines: true, hatching: false, minArea: 20, bridgePixels: 4 }, payload.settings || {});
+    const settings = Object.assign({ mode: "outline", blur: 2, threshold: 22, highThreshold: 38, close: 1, simplify: 1.5, detail: 45, lineWidth: 1, keepMain: true, removeBackground: true, preserveDetails: true, invertSource: false, innerLines: true, hatching: false, minArea: 20, bridgePixels: 4 }, payload.settings || {});
     const converted = grayscale(data, width, height);
     const gray = blurGray(converted.gray, width, height, settings.blur);
-    let subject = colorSegmentation(data, gray, converted.alpha, width, height, clamp(settings.threshold * 3.4, 12, 180), settings.invertSource);
-    subject = cleanComponents(subject, width, height, settings.minArea, settings.keepMain);
+    const detected = colorSegmentation(data, gray, converted.alpha, width, height, clamp(settings.threshold * 3.4, 12, 180), settings.invertSource);
+    let subject = cleanComponents(detected, width, height, settings.minArea, settings.keepMain);
     if (settings.close > 0) subject = erode(dilate(subject, width, height, settings.close), width, height, settings.close);
     let mask;
     if (settings.mode === "silhouette") mask = subject;
     else {
       const low = clamp(35 - settings.detail * .25, 5, 45), high = clamp(settings.highThreshold + (50 - settings.detail) * .25, low + 3, 80);
       let edges = sobelEdges(gray, width, height, low, high);
-      if (settings.removeBackground) for (let i = 0; i < edges.length; i++) edges[i] = edges[i] && subject[i] ? 1 : 0;
+      if (settings.removeBackground && !settings.preserveDetails) {
+        for (let i = 0; i < edges.length; i++) edges[i] = edges[i] && subject[i] ? 1 : 0;
+      }
       const outer = outline(subject, width, height, Math.max(1, Math.round(settings.lineWidth)));
       if (settings.mode === "outline") {
         mask = outer;
@@ -372,7 +374,8 @@
         if (settings.autoBridges) mask = connectComponents(mask, width, height, settings.bridgePixels);
       }
     }
-    mask = cleanComponents(mask, width, height, settings.minArea, false);
+    const finalMinArea = settings.preserveDetails && settings.mode !== "silhouette" ? Math.max(2, Math.round(settings.minArea * .12)) : settings.minArea;
+    mask = cleanComponents(mask, width, height, finalMinArea, false);
     const paths = vectorizeMask(mask, width, height, settings.simplify);
     const analysis = analyzeMask(mask, width, height, settings.minArea, settings.bridgePixels);
     return { width, height, mask, paths, analysis };
