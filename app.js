@@ -21,7 +21,7 @@
   const state = {
     file: null, fileUrl: "", source: null, original: null, result: null, paths: [], mask: null,
     mode: "outline", orientation: "portrait", tool: "pan", zoom: 100, view: "split",
-    processingId: 0, processingTimer: null, worker: null, history: [], future: [],
+    processingId: 0, processingTimer: null, workerTimer: null, worker: null, workerDisabled: false, history: [], future: [],
     drawing: false, lastPoint: null, node: null, cropMode: false, cropStart: null, cropRect: null,
     aspect: 1.5, toastTimer: null
   };
@@ -125,14 +125,28 @@
   }
 
   function ensureWorker() {
-    if (state.worker || !("Worker" in window)) return state.worker;
-    state.worker = new Worker("worker.js");
+    if (state.worker) return state.worker;
+    if (state.workerDisabled || !("Worker" in window)) return null;
+    try {
+      state.worker = new Worker(new URL("worker.js", window.location.href));
+    } catch (error) {
+      state.workerDisabled = true;
+      console.warn("Outlines: Web Worker nicht verfügbar, Verarbeitung im Hauptfenster.", error);
+      return null;
+    }
     state.worker.onmessage = ({ data }) => {
       if (data.id !== state.processingId) return;
+      window.clearTimeout(state.workerTimer);
       if (data.error) { setProcessState("Verarbeitung fehlgeschlagen", "error"); toast(data.error, true); return; }
       acceptResult(data.result);
     };
-    state.worker.onerror = () => { state.worker.terminate(); state.worker = null; setProcessState("Worker nicht verfügbar – lokaler Rückfallmodus", "error"); runProcessingFallback(); };
+    state.worker.onerror = (event) => {
+      event.preventDefault?.();
+      window.clearTimeout(state.workerTimer);
+      state.worker?.terminate(); state.worker = null; state.workerDisabled = true;
+      setProcessState("Lokale Direktverarbeitung …", "busy");
+      window.setTimeout(() => runProcessingFallback(), 0);
+    };
     return state.worker;
   }
 
@@ -147,8 +161,17 @@
     state.processingId++; setProcessState("Konturen werden berechnet …", "busy");
     const payload = { width: state.source.width, height: state.source.height, data: new Uint8ClampedArray(state.source.data), settings: processingSettings() };
     const worker = ensureWorker();
-    if (worker) worker.postMessage({ id: state.processingId, payload }, [payload.data.buffer]);
-    else runProcessingFallback(payload);
+    if (worker) {
+      const requestId = state.processingId;
+      window.clearTimeout(state.workerTimer);
+      worker.postMessage({ id: requestId, payload }, [payload.data.buffer]);
+      state.workerTimer = window.setTimeout(() => {
+        if (requestId !== state.processingId) return;
+        state.worker?.terminate(); state.worker = null; state.workerDisabled = true;
+        setProcessState("Lokale Direktverarbeitung …", "busy");
+        window.setTimeout(() => runProcessingFallback(), 0);
+      }, 12000);
+    } else window.setTimeout(() => runProcessingFallback(payload), 0);
   }
 
   function runProcessingFallback(payload) {
