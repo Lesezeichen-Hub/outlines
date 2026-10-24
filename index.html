@@ -1,0 +1,187 @@
+<!doctype html>
+<html lang="de">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#171914">
+  <meta name="description" content="Lokales Werkzeug für maßhaltige Konturen, Schablonen und Werkvorlagen.">
+  <title>Outlines · Werkvorlagen</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <header class="topbar">
+    <a class="brand" href="/" aria-label="Zurück zum Lesezeichen-Hub">
+      <span class="brand-mark" aria-hidden="true">O</span>
+      <span><strong>Outlines</strong><small>Werkvorlagen aus Bildern</small></span>
+    </a>
+    <div class="privacy"><span aria-hidden="true">●</span> Verarbeitung bleibt lokal</div>
+    <div class="top-actions">
+      <button id="undo" class="icon-button" type="button" disabled title="Rückgängig (Strg+Z)">↶</button>
+      <button id="redo" class="icon-button" type="button" disabled title="Wiederholen (Strg+Umschalt+Z)">↷</button>
+      <button id="resetAll" class="ghost-button" type="button" disabled>Original wiederherstellen</button>
+    </div>
+  </header>
+
+  <main class="app-shell">
+    <aside class="sidebar" aria-label="Verarbeitungseinstellungen">
+      <section class="panel import-panel">
+        <div class="section-heading"><span>01</span><div><h2>Motiv</h2><p>Foto oder Grafik auswählen</p></div></div>
+        <label id="dropzone" class="dropzone" for="fileInput" tabindex="0">
+          <input id="fileInput" type="file" accept="image/jpeg,image/png,image/webp,image/gif,image/bmp,image/tiff,image/svg+xml,.jpg,.jpeg,.png,.webp,.gif,.bmp,.tif,.tiff,.svg">
+          <span class="drop-icon">＋</span>
+          <strong>Bild hier ablegen</strong>
+          <small>oder Datei auswählen · JPG, PNG, WebP, GIF, BMP, TIFF, SVG</small>
+        </label>
+        <p id="fileMeta" class="file-meta">Noch kein Bild geladen.</p>
+        <div class="transform-grid">
+          <button type="button" data-transform="rotate-left" disabled>↶ 90°</button>
+          <button type="button" data-transform="rotate-right" disabled>↷ 90°</button>
+          <button type="button" data-transform="flip-x" disabled>↔ Spiegeln</button>
+          <button type="button" id="cropButton" disabled>⌗ Zuschneiden</button>
+        </div>
+      </section>
+
+      <section class="panel">
+        <div class="section-heading"><span>02</span><div><h2>Werkart</h2><p>Verarbeitung und Detailgrad</p></div></div>
+        <label class="field">Voreinstellung
+          <select id="preset">
+            <option value="saw-simple">Laubsäge · Einfach</option>
+            <option value="saw-detail">Laubsäge · Detail</option>
+            <option value="carve-rough">Schnitzen · Grob</option>
+            <option value="carve-fine">Schnitzen · Fein</option>
+            <option value="pyro">Brandmalerei</option>
+            <option value="stencil">Schablone</option>
+            <option value="custom">Benutzerdefiniert</option>
+          </select>
+        </label>
+        <div class="mode-grid" role="radiogroup" aria-label="Verarbeitungsmodus">
+          <button type="button" data-mode="silhouette"><span>●</span><strong>Silhouette</strong><small>geschlossene Außenform</small></button>
+          <button type="button" data-mode="outline" class="active"><span>◯</span><strong>Umriss</strong><small>wenige Innenlinien</small></button>
+          <button type="button" data-mode="lineart"><span>≋</span><strong>Linienbild</strong><small>variable Details</small></button>
+          <button type="button" data-mode="stencil"><span>▣</span><strong>Schablone</strong><small>ausschneidbare Flächen</small></button>
+        </div>
+
+        <div class="range-field"><label for="detail">Detailtiefe <output id="detailValue">42</output></label><input id="detail" type="range" min="0" max="100" value="42"></div>
+        <div class="range-field"><label for="threshold">Motivtrennung <output id="thresholdValue">24</output></label><input id="threshold" type="range" min="4" max="60" value="24"></div>
+        <div class="range-field"><label for="smoothing">Glättung <output id="smoothingValue">2</output></label><input id="smoothing" type="range" min="0" max="8" value="2"></div>
+        <div class="range-field"><label for="simplify">Vereinfachung <output id="simplifyValue">1.6</output></label><input id="simplify" type="range" min="0" max="6" value="1.6" step="0.2"></div>
+        <div class="range-field"><label for="lineWidth">Linienstärke <output id="lineWidthValue">1.2</output></label><input id="lineWidth" type="range" min="0.6" max="8" value="1.2" step="0.2"></div>
+        <div class="check-list">
+          <label><input id="removeBackground" type="checkbox" checked> Hintergrund automatisch entfernen</label>
+          <label><input id="keepMain" type="checkbox" checked> Nur Hauptmotiv bevorzugen</label>
+          <label><input id="innerLines" type="checkbox" checked> Charakteristische Innenlinien</label>
+          <label><input id="hatching" type="checkbox"> Abstrahierte Schraffuren</label>
+          <label><input id="autoBridges" type="checkbox"> Schablonenstege automatisch ergänzen</label>
+          <label><input id="invertSource" type="checkbox"> Helles Motiv auf dunklem Grund</label>
+        </div>
+      </section>
+
+      <section class="panel">
+        <div class="section-heading"><span>03</span><div><h2>Werkmaß</h2><p>Reale Ausgabegröße festlegen</p></div></div>
+        <div class="measure-grid">
+          <label>Breite <span><input id="widthMm" type="number" value="120" min="5" max="3000" step="1"> mm</span></label>
+          <label>Höhe <span><input id="heightMm" type="number" value="80" min="5" max="3000" step="1"> mm</span></label>
+        </div>
+        <label class="inline-check"><input id="lockRatio" type="checkbox" checked> Seitenverhältnis sperren</label>
+        <div class="measure-grid">
+          <label>Mindestdetail <span><input id="minDetailMm" type="number" value="2" min="0" max="50" step="0.2"> mm</span></label>
+          <label>Mindeststeg <span><input id="minBridgeMm" type="number" value="3" min="0.2" max="50" step="0.2"> mm</span></label>
+        </div>
+        <label class="field">Papierformat
+          <select id="paper"><option value="a4">A4</option><option value="a3">A3</option></select>
+        </label>
+        <div class="segmented" role="group" aria-label="Papierausrichtung">
+          <button class="active" type="button" data-orientation="portrait">Hochformat</button>
+          <button type="button" data-orientation="landscape">Querformat</button>
+        </div>
+        <div class="check-list compact">
+          <label><input id="tilePages" type="checkbox" checked> Übergroßes Motiv auf mehrere Seiten aufteilen</label>
+          <label><input id="registrationMarks" type="checkbox" checked> Passmarken und 8 mm Überlappung</label>
+          <label><input id="controlSquare" type="checkbox" checked> Kontrollquadrat 20 × 20 mm</label>
+        </div>
+      </section>
+    </aside>
+
+    <section class="workspace">
+      <div class="workspace-head">
+        <div><span class="eyebrow">ARBEITSFLÄCHE</span><h1>Vom Motiv zur Werkvorlage.</h1><p>Reduziere Fotos und Grafiken auf klare, belastbare Konturen.</p></div>
+        <div id="processState" class="process-state"><span></span> Bereit für ein Bild</div>
+      </div>
+
+      <div id="emptyState" class="empty-state">
+        <div class="empty-visual" aria-hidden="true"><span></span><span></span><span></span></div>
+        <h2>Ein gutes Motiv beginnt mit einer klaren Form.</h2>
+        <p>Lade ein Bild. Outlines sucht das Hauptobjekt, entfernt Störungen und erzeugt eine maßhaltige Vorlage – vollständig auf diesem Gerät.</p>
+        <button id="emptyUpload" class="primary-button" type="button">Bild auswählen</button>
+      </div>
+
+      <div id="editor" class="editor" hidden>
+        <div class="canvas-toolbar">
+          <div class="view-tabs" role="tablist">
+            <button class="active" data-view="split" type="button">Vergleich</button>
+            <button data-view="original" type="button">Original</button>
+            <button data-view="result" type="button">Vorlage</button>
+          </div>
+          <div class="zoom-tools">
+            <button id="zoomOut" type="button" title="Verkleinern">−</button>
+            <input id="zoom" type="range" min="25" max="300" value="100" aria-label="Zoom">
+            <output id="zoomValue">100 %</output>
+            <button id="zoomIn" type="button" title="Vergrößern">＋</button>
+            <button id="fitView" type="button">Einpassen</button>
+            <label><input id="showGrid" type="checkbox"> Raster</label>
+          </div>
+        </div>
+
+        <div id="canvasPair" class="canvas-pair">
+          <article id="originalPane" class="canvas-pane">
+            <header><div><span>ORIGINAL</span><strong id="originalSize">–</strong></div><small>Ziehen zum Zuschneiden</small></header>
+            <div class="canvas-viewport"><div class="canvas-stage"><canvas id="originalCanvas"></canvas><div id="cropOverlay" class="crop-overlay" hidden></div></div></div>
+          </article>
+          <article id="resultPane" class="canvas-pane result-pane">
+            <header><div><span>VORLAGE</span><strong id="resultSize">–</strong></div><small id="vectorCount">0 Konturen</small></header>
+            <div class="canvas-viewport checker"><div class="canvas-stage"><canvas id="resultCanvas"></canvas></div></div>
+          </article>
+        </div>
+
+        <div class="editor-tools" aria-label="Manuelle Korrektur">
+          <span>MANUELL KORRIGIEREN</span>
+          <button class="active" data-tool="pan" type="button">✥ Verschieben</button>
+          <button data-tool="draw" type="button">✎ Linie zeichnen</button>
+          <button data-tool="erase" type="button">⌫ Linie entfernen</button>
+          <button data-tool="remove" type="button">⊘ Kontur löschen</button>
+          <button data-tool="nodes" type="button">◇ Stützpunkte</button>
+          <label>Pinsel <input id="brushSize" type="range" min="1" max="40" value="8"><output id="brushValue">8 px</output></label>
+          <label class="inline-check"><input id="mirrorOutput" type="checkbox"> Ausgabe spiegeln</label>
+          <label class="inline-check"><input id="transparentPreview" type="checkbox"> Transparenz anzeigen</label>
+        </div>
+
+        <section class="quality-panel">
+          <div class="quality-head"><div><span>WERKSTATT-PRÜFUNG</span><strong id="qualityTitle">Vorlage wird geprüft</strong></div><button id="reanalyze" class="ghost-button" type="button">Neu berechnen</button></div>
+          <div id="warnings" class="warnings" aria-live="polite"></div>
+        </section>
+
+        <section class="export-panel">
+          <div><span class="eyebrow">04 · AUSGABE</span><h2>Maßhaltig exportieren</h2><p id="exportSummary">120 mm breit · A4 · 300 DPI</p></div>
+          <div class="export-options">
+            <label>Darstellung<select id="outputStyle"><option value="outline">Schwarze Umrisslinie</option><option value="filled">Schwarze Form</option><option value="inverse">Weiße Form auf Schwarz</option><option value="inner">Nur Innenkonturen</option></select></label>
+            <label>DPI<select id="dpi"><option>150</option><option selected>300</option><option>600</option></select></label>
+            <label>JPG-Qualität<input id="jpgQuality" type="range" min="60" max="100" value="92"><output id="jpgQualityValue">92 %</output></label>
+            <label class="inline-check"><input id="transparentPng" type="checkbox" checked> PNG transparent</label>
+          </div>
+          <div class="export-buttons">
+            <button data-export="png" type="button">PNG <small>hochauflösend</small></button>
+            <button data-export="jpg" type="button">JPG <small>weißer Grund</small></button>
+            <button data-export="svg" type="button">SVG <small>echte Pfade</small></button>
+            <button data-export="pdf" type="button" class="primary">PDF <small>maßhaltig / mehrseitig</small></button>
+            <button data-export="dxf" type="button">DXF <small>CAD / Laser</small></button>
+          </div>
+        </section>
+      </div>
+    </section>
+  </main>
+
+  <div id="toast" class="toast" role="status" hidden></div>
+  <script src="outlines-core.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>
