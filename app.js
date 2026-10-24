@@ -453,6 +453,67 @@
     lines.push("0","ENDSEC","0","EOF"); downloadBlob(new Blob([lines.join("\r\n")], { type: "application/dxf" }), "dxf");
   }
 
+  function createWerkplanProject() {
+    const widthMm = Number($("#widthMm").value), heightMm = Number($("#heightMm").value);
+    const converted = Core.pathsToWerkplanPolygons(
+      selectedPaths($("#outputStyle").value), state.result.width, state.result.height, widthMm, heightMm,
+      { mirrored: $("#mirrorOutput").checked }
+    );
+    if (!converted.length) throw new Error("Es wurden keine geschlossenen Formen für Werkplan gefunden.");
+    const stamp = Date.now();
+    const objects = converted.map((shape, index) => ({
+      type: "polygon",
+      points: shape.points,
+      id: `outlines-${stamp}-${index + 1}`,
+      view: "front",
+      layer: shape.role === "outer" ? "outlines-forms" : "outlines-details",
+      style: "solid",
+      strokeWidth: .75,
+      stroke: "#263238",
+      fillMode: "none",
+      name: `${shape.role === "outer" ? "Außenform" : "Innenkontur"} ${index + 1}`,
+      outlineRole: shape.role,
+      sourceAreaMm2: shape.areaMm2,
+      locked: false,
+      visible: true
+    }));
+    const baseName = (state.file?.name || "Outlines-Vorlage").replace(/\.[^.]+$/, "");
+    const padding = Math.max(10, Math.min(widthMm, heightMm) * .08);
+    const layers = [
+      { id: "outlines-forms", name: "Outlines · Außenformen", visible: true, locked: false, printable: true },
+      { id: "outlines-details", name: "Outlines · Innenkonturen", visible: true, locked: false, printable: true }
+    ];
+    return {
+      app: "Werkplan",
+      version: 13,
+      unit: "mm",
+      projectName: `${baseName} · Outlines`,
+      drawingNumber: `OUT-${new Date().toISOString().slice(0, 10).replaceAll("-", "")}`,
+      drawnBy: "Outlines",
+      projectDate: new Date().toISOString().slice(0, 10),
+      materials: [],
+      objects,
+      settings: {
+        grid: true, snap: true,
+        snapModes: { endpoint: true, midpoint: true, intersection: true, tangent: true, perpendicular: true, quadrant: true, extension: true },
+        zoom: 1, scale: 1, autoScale: true,
+        dimensionStyle: { endStyle: "arrow", textSize: 14, defaultOffset: 22, unit: "auto", decimals: 1 },
+        sheetFormat: $("#paper").value.toUpperCase(), sheetOrientation: state.orientation,
+        enabledViews: ["front"], activeView: "front", viewReferences: {},
+        layers, activeLayer: "outlines-forms",
+        viewSettings: { front: { scale: 1, autoScale: true, viewBox: { x: -padding, y: -padding, width: widthMm + padding * 2, height: heightMm + padding * 2 }, layerVisibility: { "outlines-forms": true, "outlines-details": true }, exportX: null, exportY: null } },
+        exportScaleMode: "auto", exportScale: 1
+      },
+      source: { app: "Outlines", widthMm, heightMm, originalFile: state.file?.name || "", exportedAt: new Date().toISOString() }
+    };
+  }
+
+  function exportWerkplan() {
+    const project = createWerkplanProject();
+    downloadBlob(new Blob([JSON.stringify(project, null, 2)], { type: "application/json" }), "werkplan");
+    toast(`${project.objects.length} editierbare Form${project.objects.length === 1 ? "" : "en"} für Werkplan exportiert.`);
+  }
+
   function pdfPathCommands(tileX, tileY, marginPt, pageHeightPt, motifWPt, motifHPt, style) {
     const sx = motifWPt / state.result.width, sy = motifHPt / state.result.height, mirrored = $("#mirrorOutput").checked;
     let content = style === "inverse" ? `0 0 0 rg 0 0 ${paperDimensions()[0] * 72 / 25.4} ${pageHeightPt} re f\n1 1 1 rg\n` : "0 0 0 rg\n";
@@ -511,7 +572,8 @@
       else if (format === "svg") exportSVG();
       else if (format === "pdf") downloadBlob(createPDF(), "pdf");
       else if (format === "dxf") exportDXF();
-      if (format !== "png" && format !== "jpg") toast(`${format.toUpperCase()} wurde maßhaltig erzeugt.`);
+      else if (format === "werkplan") exportWerkplan();
+      if (!["png", "jpg", "werkplan"].includes(format)) toast(`${format.toUpperCase()} wurde maßhaltig erzeugt.`);
     } catch (error) { toast(error.message || "Der Export ist fehlgeschlagen.", true); }
   }
 

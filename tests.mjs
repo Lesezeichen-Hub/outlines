@@ -86,4 +86,17 @@ function image(width, height, pixel) {
   assert.ok(detailedTextInk > reducedTextInk, "Schriftbereich fehlt in der Detailausgabe");
 }
 
-console.log("Outlines core: 7 Tests erfolgreich.");
+{
+  const outer = [[0,0],[10,0],[10,10],[0,10],[0,0]];
+  const inner = [[3,3],[3,7],[7,7],[7,3],[3,3]];
+  const polygons = Core.pathsToWerkplanPolygons([outer, inner], 10, 10, 200, 100, { mirrored: false });
+  assert.equal(polygons.length, 2);
+  assert.equal(polygons[0].role, "outer");
+  assert.equal(polygons[1].role, "inner");
+  assert.deepEqual(polygons[0].points[2], { x: 200, y: 100 });
+  assert.equal(polygons[0].points.length, 4, "Schlusspunkt darf im Werkplan-Polygon nicht doppelt vorkommen");
+  const mirrored = Core.pathsToWerkplanPolygons([outer], 10, 10, 200, 100, { mirrored: true });
+  assert.deepEqual(mirrored[0].points[0], { x: 200, y: 0 });
+}
+
+console.log("Outlines core: 8 Tests erfolgreich.");

@@ -150,7 +150,7 @@ canvas { display: block; max-width: none; background: #fff; image-rendering: aut
 .export-options label { color: var(--muted); font-size: .6rem; }
 .export-options select { margin-top: 4px; }
 .export-options output { color: var(--accent); }
-.export-buttons { grid-column: 1 / -1; display: grid; grid-template-columns: repeat(5, 1fr); gap: 7px; }
+.export-buttons { grid-column: 1 / -1; display: grid; grid-template-columns: repeat(6, minmax(100px, 1fr)); gap: 7px; }
 .export-buttons button { min-height: 48px; border: 1px solid var(--line); color: var(--ink); background: #141711; font-weight: 700; }
 .export-buttons button small { display: block; margin-top: 2px; color: var(--muted); font-size: .54rem; font-weight: 400; }
 .export-buttons button.primary { border-color: var(--accent); color: #17130c; background: var(--accent); }

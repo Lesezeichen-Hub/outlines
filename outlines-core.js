@@ -323,6 +323,38 @@
     return paths;
   }
 
+  function pathArea(points) {
+    let area = 0;
+    for (let index = 0; index < points.length; index++) {
+      const current = points[index], next = points[(index + 1) % points.length];
+      area += current[0] * next[1] - next[0] * current[1];
+    }
+    return area / 2;
+  }
+
+  function pathsToWerkplanPolygons(paths, sourceWidth, sourceHeight, widthMm, heightMm, options) {
+    options = options || {};
+    const scaleX = Number(widthMm) / Number(sourceWidth), scaleY = Number(heightMm) / Number(sourceHeight);
+    if (![scaleX, scaleY].every(value => Number.isFinite(value) && value > 0)) throw new Error("Ungültige Abmessungen für den Werkplan-Export.");
+    const round = value => Math.round(value * 1000) / 1000;
+    const result = [];
+    for (const sourcePath of paths || []) {
+      if (!Array.isArray(sourcePath) || sourcePath.length < 4) continue;
+      const path = sourcePath.slice();
+      if (path.length > 1 && path[0][0] === path.at(-1)[0] && path[0][1] === path.at(-1)[1]) path.pop();
+      const role = pathArea(path) >= 0 ? "outer" : "inner";
+      const points = [];
+      for (const point of path) {
+        const sourceX = options.mirrored ? sourceWidth - point[0] : point[0];
+        const converted = { x: round(sourceX * scaleX), y: round(point[1] * scaleY) };
+        const previous = points.at(-1);
+        if (!previous || previous.x !== converted.x || previous.y !== converted.y) points.push(converted);
+      }
+      if (points.length >= 3) result.push({ points, role, areaMm2: round(Math.abs(pathArea(path) * scaleX * scaleY)) });
+    }
+    return result;
+  }
+
   function analyzeMask(mask, width, height, minPixels, bridgePixels) {
     const foreground = components(mask, width, height, 1).sort((a,b) => b.size - a.size);
     const holes = components(mask, width, height, 0).filter((item) => !item.border);
@@ -381,7 +413,7 @@
     return { width, height, mask, paths, analysis };
   }
 
-  const api = { clamp, grayscale, blurGray, otsu, sobelEdges, dilate, erode, outline, components, cleanComponents, connectComponents, vectorizeMask, analyzeMask, processImage, douglasPeucker };
+  const api = { clamp, grayscale, blurGray, otsu, sobelEdges, dilate, erode, outline, components, cleanComponents, connectComponents, vectorizeMask, pathsToWerkplanPolygons, analyzeMask, processImage, douglasPeucker };
   root.OutlinesCore = api;
   if (typeof module !== "undefined" && module.exports) module.exports = api;
 })(typeof self !== "undefined" ? self : globalThis);
