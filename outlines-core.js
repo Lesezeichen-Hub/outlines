@@ -259,13 +259,23 @@
     const work = closed ? points.slice(0, -1) : points.slice();
     if (work.length < 3) return points;
     const simplify = (array) => {
-      let maxDistance = 0, index = 0;
-      for (let i = 1; i < array.length - 1; i++) {
-        const distance = perpendicular(array[i], array[0], array.at(-1));
-        if (distance > maxDistance) { maxDistance = distance; index = i; }
+      if (array.length < 3) return array.slice();
+      const keep = new Uint8Array(array.length), stack = [[0, array.length - 1]];
+      keep[0] = 1; keep[array.length - 1] = 1;
+      while (stack.length) {
+        const [start, end] = stack.pop();
+        let maxDistance = 0, index = -1;
+        for (let i = start + 1; i < end; i++) {
+          const distance = perpendicular(array[i], array[start], array[end]);
+          if (distance > maxDistance) { maxDistance = distance; index = i; }
+        }
+        if (index !== -1 && maxDistance > epsilon) {
+          keep[index] = 1;
+          if (index - start > 1) stack.push([start, index]);
+          if (end - index > 1) stack.push([index, end]);
+        }
       }
-      if (maxDistance <= epsilon) return [array[0], array.at(-1)];
-      return [...simplify(array.slice(0, index + 1)).slice(0, -1), ...simplify(array.slice(index))];
+      return array.filter((_, index) => keep[index]);
     };
     let result;
     if (closed) {

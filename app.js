@@ -7,7 +7,7 @@
   const sourceCanvas = $("#originalCanvas"), resultCanvas = $("#resultCanvas");
   const sourceCtx = sourceCanvas.getContext("2d", { willReadFrequently: true });
   const resultCtx = resultCanvas.getContext("2d", { willReadFrequently: true });
-  const MAX_PROCESS_EDGE = 1800, HISTORY_LIMIT = 18;
+  const MAX_PROCESS_EDGE = 1200, HISTORY_LIMIT = 18;
 
   const presets = {
     "saw-simple": { mode: "silhouette", detail: 18, threshold: 25, smoothing: 4, simplify: 3.2, lineWidth: 2.2, innerLines: false, hatching: false, keepMain: true },
@@ -29,6 +29,16 @@
   function setProcessState(text, kind = "") {
     const element = $("#processState"); element.className = `process-state ${kind}`.trim();
     element.innerHTML = `<span></span>${escapeHTML(text)}`;
+  }
+
+  function showProcessingError(message) {
+    const text = message || "Die Konturverarbeitung ist fehlgeschlagen.";
+    setProcessState("Verarbeitung fehlgeschlagen", "error");
+    $("#qualityTitle").textContent = "Verarbeitung konnte nicht abgeschlossen werden";
+    $("#warnings").innerHTML = "";
+    const item = document.createElement("div");
+    item.className = "warning"; item.textContent = text;
+    $("#warnings").appendChild(item); toast(text, true);
   }
 
   function escapeHTML(value) {
@@ -137,7 +147,7 @@
     state.worker.onmessage = ({ data }) => {
       if (data.id !== state.processingId) return;
       window.clearTimeout(state.workerTimer);
-      if (data.error) { setProcessState("Verarbeitung fehlgeschlagen", "error"); toast(data.error, true); return; }
+      if (data.error) { showProcessingError(data.error); return; }
       acceptResult(data.result);
     };
     state.worker.onerror = (event) => {
@@ -178,7 +188,7 @@
     try {
       const input = payload || { width: state.source.width, height: state.source.height, data: state.source.data, settings: processingSettings() };
       acceptResult(Core.processImage(input));
-    } catch (error) { setProcessState("Verarbeitung fehlgeschlagen", "error"); toast(error.message, true); }
+    } catch (error) { showProcessingError(error.message); }
   }
 
   function acceptResult(result) {
@@ -195,7 +205,7 @@
     const x = (value) => mirrored ? width - value : value;
     path.moveTo(x(points[0][0]), points[0][1]);
     for (let i = 1; i < points.length; i++) path.lineTo(x(points[i][0]), points[i][1]);
-    path.close(); return path;
+    path.closePath(); return path;
   }
 
   function selectedPaths(style = $("#outputStyle").value) {

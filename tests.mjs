@@ -59,4 +59,11 @@ function image(width, height, pixel) {
   assert.deepEqual(simplified[0], simplified.at(-1));
 }
 
-console.log("Outlines core: 5 Tests erfolgreich.");
+{
+  const points = [];
+  for (let index = 0; index < 50000; index++) points.push([index, Math.sin(index / 30) * 8]);
+  const simplified = Core.douglasPeucker(points, 1);
+  assert.ok(simplified.length > 2 && simplified.length < points.length, "Lange Kontur wurde nicht stack-sicher vereinfacht");
+}
+
+console.log("Outlines core: 6 Tests erfolgreich.");
