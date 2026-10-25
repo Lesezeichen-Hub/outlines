@@ -99,4 +99,16 @@ function image(width, height, pixel) {
   assert.deepEqual(mirrored[0].points[0], { x: 200, y: 0 });
 }
 
-console.log("Outlines core: 8 Tests erfolgreich.");
+{
+  const denseCircle = [];
+  for (let degree = 0; degree <= 360; degree++) {
+    const angle = degree * Math.PI / 180;
+    denseCircle.push([50 + Math.cos(angle) * 40, 50 + Math.sin(angle) * 40]);
+  }
+  const [shape] = Core.pathsToWerkplanPolygons([denseCircle], 100, 100, 100, 100, { offsetX: 550, offsetY: 330, toleranceMm: .75 });
+  assert.ok(shape.points.length < 40, "Werkplan-Kontur enthält zu viele Bearbeitungspunkte");
+  assert.ok(shape.points.every(point => point.x >= 550 && point.y >= 330), "Werkplan-Form wurde nicht in die Arbeitsfläche versetzt");
+  assert.notDeepEqual(shape.points[0], shape.points.at(-1), "Werkplan-Polygon enthält einen doppelten Schlusspunkt");
+}
+
+console.log("Outlines core: 9 Tests erfolgreich.");

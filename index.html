@@ -168,6 +168,7 @@
             <label>Darstellung<select id="outputStyle"><option value="outline">Schwarze Umrisslinie</option><option value="filled">Schwarze Form</option><option value="inverse">Weiße Form auf Schwarz</option><option value="inner">Nur Innenkonturen</option></select></label>
             <label>DPI<select id="dpi"><option>150</option><option selected>300</option><option>600</option></select></label>
             <label>JPG-Qualität<input id="jpgQuality" type="range" min="60" max="100" value="92"><output id="jpgQualityValue">92 %</output></label>
+            <label>Werkplan-Präzision<select id="werkplanPrecision"><option value="0.35">Fein · 0,35 mm</option><option value="0.75" selected>Werkstatt · 0,75 mm</option><option value="1.5">Grob · 1,5 mm</option></select></label>
             <label class="inline-check"><input id="transparentPng" type="checkbox" checked> PNG transparent</label>
           </div>
           <div class="export-buttons">
@@ -184,7 +185,7 @@
   </main>
 
   <div id="toast" class="toast" role="status" hidden></div>
-  <script src="outlines-core.js?v=1.2.0"></script>
-  <script src="app.js?v=1.2.0"></script>
+  <script src="outlines-core.js?v=1.2.1"></script>
+  <script src="app.js?v=1.2.1"></script>
 </body>
 </html>

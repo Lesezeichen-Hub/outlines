@@ -337,18 +337,26 @@
     const scaleX = Number(widthMm) / Number(sourceWidth), scaleY = Number(heightMm) / Number(sourceHeight);
     if (![scaleX, scaleY].every(value => Number.isFinite(value) && value > 0)) throw new Error("Ungültige Abmessungen für den Werkplan-Export.");
     const round = value => Math.round(value * 1000) / 1000;
+    const offsetX = Number(options.offsetX) || 0, offsetY = Number(options.offsetY) || 0;
+    const tolerance = Math.max(0, Number(options.toleranceMm) || 0);
     const result = [];
     for (const sourcePath of paths || []) {
       if (!Array.isArray(sourcePath) || sourcePath.length < 4) continue;
       const path = sourcePath.slice();
       if (path.length > 1 && path[0][0] === path.at(-1)[0] && path[0][1] === path.at(-1)[1]) path.pop();
       const role = pathArea(path) >= 0 ? "outer" : "inner";
-      const points = [];
+      let points = [];
       for (const point of path) {
         const sourceX = options.mirrored ? sourceWidth - point[0] : point[0];
-        const converted = { x: round(sourceX * scaleX), y: round(point[1] * scaleY) };
+        const converted = { x: round(sourceX * scaleX + offsetX), y: round(point[1] * scaleY + offsetY) };
         const previous = points.at(-1);
         if (!previous || previous.x !== converted.x || previous.y !== converted.y) points.push(converted);
+      }
+      if (tolerance > 0 && points.length > 4) {
+        const closed = [...points.map(point => [point.x, point.y]), [points[0].x, points[0].y]];
+        const simplified = douglasPeucker(closed, tolerance);
+        while (simplified.length > 1 && simplified[0][0] === simplified.at(-1)[0] && simplified[0][1] === simplified.at(-1)[1]) simplified.pop();
+        if (simplified.length >= 3) points = simplified.map(point => ({ x: round(point[0]), y: round(point[1]) }));
       }
       if (points.length >= 3) result.push({ points, role, areaMm2: round(Math.abs(pathArea(path) * scaleX * scaleY)) });
     }

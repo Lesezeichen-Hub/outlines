@@ -455,15 +455,17 @@
 
   function createWerkplanProject() {
     const widthMm = Number($("#widthMm").value), heightMm = Number($("#heightMm").value);
+    const workspaceWidth = Math.max(1200, widthMm + 160), workspaceHeight = Math.max(760, heightMm + 160);
+    const offsetX = (workspaceWidth - widthMm) / 2, offsetY = (workspaceHeight - heightMm) / 2;
     const converted = Core.pathsToWerkplanPolygons(
       selectedPaths($("#outputStyle").value), state.result.width, state.result.height, widthMm, heightMm,
-      { mirrored: $("#mirrorOutput").checked }
+      { mirrored: $("#mirrorOutput").checked, offsetX, offsetY, toleranceMm: Number($("#werkplanPrecision").value) }
     );
     if (!converted.length) throw new Error("Es wurden keine geschlossenen Formen für Werkplan gefunden.");
     const stamp = Date.now();
     const objects = converted.map((shape, index) => ({
-      type: "polygon",
-      points: shape.points,
+      type: shape.role === "outer" ? "polygon" : "polyline",
+      points: shape.role === "outer" ? shape.points : [...shape.points, { ...shape.points[0] }],
       id: `outlines-${stamp}-${index + 1}`,
       view: "front",
       layer: shape.role === "outer" ? "outlines-forms" : "outlines-details",
@@ -478,7 +480,6 @@
       visible: true
     }));
     const baseName = (state.file?.name || "Outlines-Vorlage").replace(/\.[^.]+$/, "");
-    const padding = Math.max(10, Math.min(widthMm, heightMm) * .08);
     const layers = [
       { id: "outlines-forms", name: "Outlines · Außenformen", visible: true, locked: false, printable: true },
       { id: "outlines-details", name: "Outlines · Innenkonturen", visible: true, locked: false, printable: true }
@@ -501,7 +502,7 @@
         sheetFormat: $("#paper").value.toUpperCase(), sheetOrientation: state.orientation,
         enabledViews: ["front"], activeView: "front", viewReferences: {},
         layers, activeLayer: "outlines-forms",
-        viewSettings: { front: { scale: 1, autoScale: true, viewBox: { x: -padding, y: -padding, width: widthMm + padding * 2, height: heightMm + padding * 2 }, layerVisibility: { "outlines-forms": true, "outlines-details": true }, exportX: null, exportY: null } },
+        viewSettings: { front: { scale: 1, autoScale: true, viewBox: { x: 0, y: 0, width: workspaceWidth, height: workspaceHeight }, layerVisibility: { "outlines-forms": true, "outlines-details": true }, exportX: null, exportY: null } },
         exportScaleMode: "auto", exportScale: 1
       },
       source: { app: "Outlines", widthMm, heightMm, originalFile: state.file?.name || "", exportedAt: new Date().toISOString() }
