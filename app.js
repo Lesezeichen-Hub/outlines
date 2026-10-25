@@ -476,6 +476,7 @@
       name: `${shape.role === "outer" ? "Außenform" : "Innenkontur"} ${index + 1}`,
       outlineRole: shape.role,
       sourceAreaMm2: shape.areaMm2,
+      compactHandles: true,
       locked: false,
       visible: true
     }));
