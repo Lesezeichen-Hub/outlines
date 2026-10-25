@@ -82,7 +82,7 @@
     const coverage = covered / mask.length;
     if (coverage > .015 && coverage < .92) return mask;
     const threshold = otsu(gray);
-    for (let i = 0; i < mask.length; i++) mask[i] = alpha[i] >= 16 && (invert ? gray[i] > threshold : gray[i] < threshold) ? 1 : 0;
+    for (let i = 0; i < mask.length; i++) mask[i] = alpha[i] >= 16 && (invert ? gray[i] > threshold : gray[i] <= threshold) ? 1 : 0;
     return mask;
   }
 
@@ -95,7 +95,7 @@
       const gy = -gray[i - width - 1] - 2 * gray[i - width] - gray[i - width + 1] + gray[i + width - 1] + 2 * gray[i + width] + gray[i + width + 1];
       magnitude[i] = Math.hypot(gx, gy); if (magnitude[i] > max) max = magnitude[i];
     }
-    const lowValue = max * low / 100, highValue = max * high / 100, queue = [];
+    const lowValue = Math.max(2, max * low / 100), highValue = Math.max(3, max * high / 100), queue = [];
     for (let i = 0; i < magnitude.length; i++) {
       if (magnitude[i] >= highValue) { strong[i] = 2; output[i] = 1; queue.push(i); }
       else if (magnitude[i] >= lowValue) strong[i] = 1;
@@ -191,10 +191,10 @@
     return out;
   }
 
-  function drawThickLine(mask, width, height, a, b, thickness) {
+  function drawThickLine(mask, width, height, a, b, thickness, value = 1) {
     let x0 = a % width, y0 = (a / width) | 0;
     const x1 = b % width, y1 = (b / width) | 0;
-    const radius = Math.max(0, Math.floor((thickness - 1) / 2));
+    const radius = Math.max(0, Math.ceil((thickness - 1) / 2));
     const dx = Math.abs(x1 - x0), sx = x0 < x1 ? 1 : -1;
     const dy = -Math.abs(y1 - y0), sy = y0 < y1 ? 1 : -1;
     let error = dx + dy;
@@ -202,7 +202,7 @@
       for (let oy = -radius; oy <= radius; oy++) for (let ox = -radius; ox <= radius; ox++) {
         if (ox * ox + oy * oy > (radius + .5) ** 2) continue;
         const px = x0 + ox, py = y0 + oy;
-        if (px >= 0 && px < width && py >= 0 && py < height) mask[py * width + px] = 1;
+        if (px >= 0 && px < width && py >= 0 && py < height) mask[py * width + px] = value;
       }
       if (x0 === x1 && y0 === y1) break;
       const e2 = 2 * error;
@@ -230,12 +230,91 @@
         }
       }
       drawThickLine(result, width, height, bestA, bestB, Math.max(1, thickness | 0));
-      joined.push(...group);
+      for (const pixel of group) joined.push(pixel);
     }
     return result;
   }
 
   function pointKey(x, y) { return `${x},${y}`; }
+
+  function tonalMask(gray, alpha, width, height, settings) {
+    const normalized = new Uint8Array(gray.length), mask = new Uint8Array(gray.length);
+    for (let i = 0; i < gray.length; i++) normalized[i] = settings.invertSource ? 255 - gray[i] : gray[i];
+    if (settings.detection !== "adaptive") {
+      const threshold = settings.detection === "otsu" ? otsu(normalized) : clamp(settings.toneThreshold, 0, 254);
+      for (let i = 0; i < mask.length; i++) mask[i] = alpha[i] >= 16 && normalized[i] <= threshold ? 1 : 0;
+      return mask;
+    }
+    const stride = width + 1, sums = new Float64Array(stride * (height + 1)), squares = new Float64Array(sums.length);
+    for (let y = 0; y < height; y++) {
+      let sum = 0, square = 0;
+      for (let x = 0; x < width; x++) {
+        const value = alpha[y * width + x] >= 16 ? normalized[y * width + x] : 255;
+        sum += value; square += value * value;
+        const at = (y + 1) * stride + x + 1;
+        sums[at] = sums[at - stride] + sum; squares[at] = squares[at - stride] + square;
+      }
+    }
+    const radius = clamp(Math.round(settings.localRadius), 3, 80);
+    for (let y = 0; y < height; y++) for (let x = 0; x < width; x++) {
+      const x0 = Math.max(0, x - radius), x1 = Math.min(width, x + radius + 1), y0 = Math.max(0, y - radius), y1 = Math.min(height, y + radius + 1);
+      const a = y0 * stride + x0, b = y0 * stride + x1, c = y1 * stride + x0, d = y1 * stride + x1, count = (x1 - x0) * (y1 - y0);
+      const mean = (sums[d] - sums[b] - sums[c] + sums[a]) / count;
+      const deviation = Math.sqrt(Math.max(0, (squares[d] - squares[b] - squares[c] + squares[a]) / count - mean * mean));
+      const threshold = mean * (.8 + .2 * deviation / 128) + Number(settings.adaptiveBias || 0), i = y * width + x;
+      mask[i] = alpha[i] >= 16 && normalized[i] <= threshold ? 1 : 0;
+    }
+    return mask;
+  }
+
+  function fillMaskHoles(mask, width, height, maxArea = Infinity) {
+    const result = new Uint8Array(mask);
+    for (const hole of components(mask, width, height, 0)) {
+      if (!hole.border && hole.size <= maxArea) for (const pixel of hole.pixels) result[pixel] = 1;
+    }
+    return result;
+  }
+
+  // In a cut stencil the WHITE islands need a route to the surrounding sheet.
+  // Removing narrow strips from the black cutout preserves those islands.
+  function bridgeStencilHoles(mask, width, height, thickness) {
+    const result = new Uint8Array(mask), groups = components(mask, width, height, 0);
+    const holes = groups.filter(group => !group.border).sort((a,b) => b.size - a.size);
+    if (!holes.length) return result;
+    const parent = new Int32Array(mask.length); parent.fill(-1);
+    const distance = new Int32Array(mask.length), queue = new Int32Array(mask.length); let tail = 0;
+    const seed = pixel => { if (parent[pixel] !== -1) return; parent[pixel] = pixel; queue[tail++] = pixel; };
+    for (const group of groups) if (group.border) for (const pixel of group.pixels) seed(pixel);
+    for (let x = 0; x < width; x++) { seed(x); seed((height - 1) * width + x); }
+    for (let y = 0; y < height; y++) { seed(y * width); seed(y * width + width - 1); }
+    for (let head = 0; head < tail; head++) {
+      const pixel = queue[head], x = pixel % width, y = Math.floor(pixel / width);
+      for (const [dx,dy] of [[1,0],[-1,0],[0,1],[0,-1]]) {
+        const nx = x + dx, ny = y + dy, next = ny * width + nx;
+        if (nx < 0 || nx >= width || ny < 0 || ny >= height || parent[next] !== -1) continue;
+        parent[next] = pixel; distance[next] = distance[pixel] + 1; queue[tail++] = next;
+      }
+    }
+    for (const hole of holes.slice(0,128)) {
+      let start = hole.pixels[0];
+      for (const pixel of hole.pixels) if (distance[pixel] < distance[start]) start = pixel;
+      let end = start;
+      while (parent[end] !== end && parent[end] !== -1) end = parent[end];
+      drawThickLine(result, width, height, start, end, thickness, 0);
+    }
+    return result;
+  }
+
+  function repairMask(mask, width, height, action, settings = {}) {
+    if (action === "fill") return fillMaskHoles(mask, width, height);
+    if (action === "speckles") return cleanComponents(mask, width, height, Math.max(2, settings.minArea || 20), false);
+    if (action === "close") return erode(dilate(mask, width, height, 1), width, height, 1);
+    if (action === "thicken") return dilate(mask, width, height, 1);
+    if (action === "thin") return erode(mask, width, height, 1);
+    if (action === "bridges") return bridgeStencilHoles(mask, width, height, Math.max(1, settings.bridgePixels || 3));
+    if (action === "join") return connectComponents(mask, width, height, Math.max(1, settings.bridgePixels || 3));
+    throw new Error("Unbekannte Vorlagenreparatur.");
+  }
 
   function simplifyCollinear(points) {
     if (points.length < 4) return points;
@@ -386,19 +465,28 @@
 
   function processImage(payload) {
     const { width, height, data } = payload;
-    const settings = Object.assign({ mode: "outline", blur: 2, threshold: 22, highThreshold: 38, close: 1, simplify: 1.5, detail: 45, lineWidth: 1, keepMain: true, removeBackground: true, preserveDetails: true, invertSource: false, innerLines: true, hatching: false, minArea: 20, bridgePixels: 4 }, payload.settings || {});
+    const settings = Object.assign({ mode: "outline", detection: "color", toneThreshold: 128, localRadius: 25, adaptiveBias: 0, contrast: 0, opening: 0, fillHoles: false, blur: 2, threshold: 22, highThreshold: 38, close: 1, simplify: 1.5, detail: 45, lineWidth: 1, keepMain: true, removeBackground: true, preserveDetails: true, invertSource: false, innerLines: true, hatching: false, minArea: 20, bridgePixels: 4 }, payload.settings || {});
     const converted = grayscale(data, width, height);
+    const gain = Math.pow(2, clamp(Number(settings.contrast) || 0, -100, 100) / 50);
+    for (let i = 0; i < converted.gray.length; i++) converted.gray[i] = clamp(Math.round((converted.gray[i] - 128) * gain + 128), 0, 255);
     const gray = blurGray(converted.gray, width, height, settings.blur);
-    const detected = colorSegmentation(data, gray, converted.alpha, width, height, clamp(settings.threshold * 3.4, 12, 180), settings.invertSource);
-    let subject = cleanComponents(detected, width, height, settings.minArea, settings.keepMain);
+    const detected = settings.detection === "alpha" ? Uint8Array.from(converted.alpha, alpha => alpha >= settings.toneThreshold ? 1 : 0) : ["threshold", "otsu", "adaptive"].includes(settings.detection) ? tonalMask(gray, converted.alpha, width, height, settings) : colorSegmentation(data, gray, converted.alpha, width, height, clamp(settings.threshold * 3.4, 12, 180), false);
+    const hints = payload.hints?.length === width * height ? payload.hints : null;
+    if (hints) for (let i = 0; i < detected.length; i++) if (hints[i]) detected[i] = hints[i] === 1 ? 1 : 0;
+    const subjectMinArea = settings.preserveDetails && settings.mode !== "silhouette" ? Math.max(2, Math.round(settings.minArea * .12)) : settings.minArea;
+    let subject = cleanComponents(detected, width, height, subjectMinArea, settings.keepMain);
+    if (settings.opening > 0) subject = dilate(erode(subject, width, height, settings.opening), width, height, settings.opening);
     if (settings.close > 0) subject = erode(dilate(subject, width, height, settings.close), width, height, settings.close);
+    if (settings.fillHoles) subject = fillMaskHoles(subject, width, height);
+    if (hints) for (let i = 0; i < subject.length; i++) if (hints[i]) subject[i] = hints[i] === 1 ? 1 : 0;
     let mask;
     if (settings.mode === "silhouette") mask = subject;
     else {
       const low = clamp(35 - settings.detail * .25, 5, 45), high = clamp(settings.highThreshold + (50 - settings.detail) * .25, low + 3, 80);
-      let edges = sobelEdges(gray, width, height, low, high);
-      if (settings.removeBackground && !settings.preserveDetails) {
-        for (let i = 0; i < edges.length; i++) edges[i] = edges[i] && subject[i] ? 1 : 0;
+      let edges = ["threshold", "otsu", "adaptive", "alpha"].includes(settings.detection) ? outline(subject, width, height, 1) : sobelEdges(gray, width, height, low, high);
+      if (settings.removeBackground) {
+        const region = settings.preserveDetails ? cleanComponents(detected, width, height, Math.max(2, Math.round(settings.minArea * .12)), false) : subject;
+        for (let i = 0; i < edges.length; i++) edges[i] = edges[i] && region[i] ? 1 : 0;
       }
       const outer = outline(subject, width, height, Math.max(1, Math.round(settings.lineWidth)));
       if (settings.mode === "outline") {
@@ -411,17 +499,19 @@
       } else {
         mask = subject;
         if (settings.close > 0) mask = erode(dilate(mask, width, height, settings.close + 1), width, height, settings.close + 1);
-        if (settings.autoBridges) mask = connectComponents(mask, width, height, settings.bridgePixels);
+        if (settings.autoBridges) mask = bridgeStencilHoles(mask, width, height, settings.bridgePixels);
       }
     }
     const finalMinArea = settings.preserveDetails && settings.mode !== "silhouette" ? Math.max(2, Math.round(settings.minArea * .12)) : settings.minArea;
     mask = cleanComponents(mask, width, height, finalMinArea, false);
+    if (hints) for (let i = 0; i < mask.length; i++) if (hints[i] === 2) mask[i] = 0;
     const paths = vectorizeMask(mask, width, height, settings.simplify);
     const analysis = analyzeMask(mask, width, height, settings.minArea, settings.bridgePixels);
+    if (settings.detection === "alpha" && converted.alpha.every(value => value >= settings.toneThreshold)) analysis.warnings.push("Das Bild enthält bei dieser Alpha-Schwelle keinen transparenten Hintergrund. Ein Helligkeits- oder Farbverfahren wählen.");
     return { width, height, mask, paths, analysis };
   }
 
-  const api = { clamp, grayscale, blurGray, otsu, sobelEdges, dilate, erode, outline, components, cleanComponents, connectComponents, vectorizeMask, pathsToWerkplanPolygons, analyzeMask, processImage, douglasPeucker };
+  const api = { clamp, grayscale, blurGray, otsu, tonalMask, sobelEdges, dilate, erode, outline, components, cleanComponents, drawThickLine, connectComponents, fillMaskHoles, bridgeStencilHoles, repairMask, vectorizeMask, pathsToWerkplanPolygons, analyzeMask, processImage, douglasPeucker };
   root.OutlinesCore = api;
   if (typeof module !== "undefined" && module.exports) module.exports = api;
 })(typeof self !== "undefined" ? self : globalThis);

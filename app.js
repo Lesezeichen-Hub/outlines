@@ -8,6 +8,8 @@
   const sourceCtx = sourceCanvas.getContext("2d", { willReadFrequently: true });
   const resultCtx = resultCanvas.getContext("2d", { willReadFrequently: true });
   const MAX_PROCESS_EDGE = 1200, HISTORY_LIMIT = 18;
+  const rangeIds = ["detail", "threshold", "smoothing", "simplify", "lineWidth", "toneThreshold", "contrast", "localRadius", "adaptiveBias", "gapClose", "opening"];
+  const processingChecks = ["removeBackground", "keepMain", "innerLines", "hatching", "autoBridges", "preserveDetails", "invertSource", "fillHoles"];
 
   const presets = {
     "saw-simple": { mode: "silhouette", detail: 18, threshold: 25, smoothing: 4, simplify: 3.2, lineWidth: 2.2, innerLines: false, hatching: false, keepMain: true },
@@ -16,6 +18,7 @@
     "carve-fine": { mode: "lineart", detail: 58, threshold: 22, smoothing: 2, simplify: 1.2, lineWidth: 1.4, innerLines: true, hatching: false, keepMain: true },
     pyro: { mode: "lineart", detail: 68, threshold: 18, smoothing: 1, simplify: .8, lineWidth: 1, innerLines: true, hatching: true, keepMain: false },
     document: { mode: "lineart", detail: 72, threshold: 14, smoothing: 0, simplify: .5, lineWidth: 1, innerLines: true, hatching: false, keepMain: false, preserveDetails: true },
+    scan: { mode: "lineart", detection: "adaptive", detail: 72, threshold: 14, smoothing: 0, simplify: .4, lineWidth: 1, innerLines: true, hatching: false, keepMain: false, preserveDetails: true, gapClose: 0 },
     stencil: { mode: "stencil", detail: 22, threshold: 26, smoothing: 4, simplify: 2.4, lineWidth: 3, innerLines: false, hatching: false, keepMain: true, autoBridges: true }
   };
 
@@ -24,7 +27,7 @@
     mode: "outline", orientation: "portrait", tool: "pan", zoom: 100, view: "split",
     processingId: 0, processingTimer: null, workerTimer: null, worker: null, workerDisabled: false, history: [], future: [],
     drawing: false, lastPoint: null, node: null, cropMode: false, cropStart: null, cropRect: null,
-    aspect: 1.5, toastTimer: null
+    aspect: 1.5, toastTimer: null, hints: null, rawCanvas: null, sourceDrawing: false, sourcePoint: null, busy: false
   };
 
   function setProcessState(text, kind = "") {
@@ -33,6 +36,7 @@
   }
 
   function showProcessingError(message) {
+    state.busy = false;
     const text = message || "Die Konturverarbeitung ist fehlgeschlagen.";
     setProcessState("Verarbeitung fehlgeschlagen", "error");
     $("#qualityTitle").textContent = "Verarbeitung konnte nicht abgeschlossen werden";
@@ -89,6 +93,7 @@
       state.file = file; state.source = sourceCtx.getImageData(0, 0, sourceCanvas.width, sourceCanvas.height);
       state.original = cloneImageData(state.source); state.aspect = sourceCanvas.width / sourceCanvas.height;
       state.history = []; state.future = []; state.paths = []; state.mask = null;
+      resetSourceEdits();
       $("#widthMm").value = 120; updateLockedHeight();
       $("#fileMeta").textContent = `${file.name} · ${naturalWidth} × ${naturalHeight} px · ${formatBytes(file.size)}${scale < 1 ? " · Arbeitsvorschau verkleinert" : ""}`;
       $("#originalSize").textContent = `${sourceCanvas.width} × ${sourceCanvas.height} px`;
@@ -102,9 +107,31 @@
 
   function cloneImageData(image) { return new ImageData(new Uint8ClampedArray(image.data), image.width, image.height); }
 
+  function resetSourceEdits() {
+    state.hints = new Uint8Array(state.source.width * state.source.height);
+    state.rawCanvas = document.createElement("canvas"); state.rawCanvas.width = state.source.width; state.rawCanvas.height = state.source.height;
+    state.rawCanvas.getContext("2d").putImageData(state.source, 0, 0);
+    state.history = []; state.future = []; updateUndoButtons();
+    renderSourcePreview();
+  }
+
+  function renderSourcePreview() {
+    if (!state.source) return;
+    const image = cloneImageData(state.source);
+    for (let i = 0; i < state.hints.length; i++) {
+      if (!state.hints[i]) continue;
+      const color = state.hints[i] === 1 ? [45, 185, 85] : [225, 65, 45], offset = i * 4;
+      for (let channel = 0; channel < 3; channel++) image.data[offset + channel] = image.data[offset + channel] * .55 + color[channel] * .45;
+      image.data[offset + 3] = 255;
+    }
+    sourceCtx.putImageData(image, 0, 0);
+    $("#clearHints").disabled = !state.hints.some(Boolean);
+  }
+
   function applySourceImage(image) {
     sourceCanvas.width = image.width; sourceCanvas.height = image.height; sourceCtx.putImageData(image, 0, 0);
     state.source = cloneImageData(image); state.aspect = image.width / image.height;
+    resetSourceEdits();
     $("#originalSize").textContent = `${image.width} × ${image.height} px`; updateLockedHeight(); fitView(); scheduleProcess(true);
   }
 
@@ -131,7 +158,10 @@
       innerLines: $("#innerLines").checked, hatching: $("#hatching").checked, invertSource: $("#invertSource").checked,
       preserveDetails: $("#preserveDetails").checked,
       autoBridges: $("#autoBridges").checked,
-      close: Math.max(0, Math.round(Number($("#smoothing").value) / 2)), minArea: Math.max(3, Math.round(minPixels * minPixels * .18)),
+      detection: $("#detection").value, toneThreshold: Number($("#toneThreshold").value), contrast: Number($("#contrast").value),
+      localRadius: Number($("#localRadius").value), adaptiveBias: Number($("#adaptiveBias").value),
+      opening: Number($("#opening").value), fillHoles: $("#fillHoles").checked,
+      close: Number($("#gapClose").value), minArea: Math.max(3, Math.round(minPixels * minPixels * .18)),
       bridgePixels: Math.max(1, Math.round(Number($("#minBridgeMm").value) / Math.max(.001, mmPerPixel)))
     };
   }
@@ -140,7 +170,7 @@
     if (state.worker) return state.worker;
     if (state.workerDisabled || !("Worker" in window)) return null;
     try {
-      state.worker = new Worker(new URL("worker.js", window.location.href));
+      state.worker = new Worker(new URL("worker.js?v=1.3.0", window.location.href));
     } catch (error) {
       state.workerDisabled = true;
       console.warn("Outlines: Web Worker nicht verfügbar, Verarbeitung im Hauptfenster.", error);
@@ -164,19 +194,21 @@
 
   function scheduleProcess(immediate = false) {
     if (!state.source) return;
+    state.processingId++;
+    state.busy = true; setProcessState("Konturen werden berechnet …", "busy");
     window.clearTimeout(state.processingTimer);
     state.processingTimer = window.setTimeout(runProcessing, immediate ? 0 : 230);
   }
 
   function runProcessing() {
     if (!state.source) return;
-    state.processingId++; setProcessState("Konturen werden berechnet …", "busy");
-    const payload = { width: state.source.width, height: state.source.height, data: new Uint8ClampedArray(state.source.data), settings: processingSettings() };
+    state.processingId++; state.busy = true; setProcessState("Konturen werden berechnet …", "busy");
+    const payload = { width: state.source.width, height: state.source.height, data: new Uint8ClampedArray(state.source.data), hints: new Uint8Array(state.hints), settings: processingSettings() };
     const worker = ensureWorker();
     if (worker) {
       const requestId = state.processingId;
       window.clearTimeout(state.workerTimer);
-      worker.postMessage({ id: requestId, payload }, [payload.data.buffer]);
+      worker.postMessage({ id: requestId, payload }, [payload.data.buffer, payload.hints.buffer]);
       state.workerTimer = window.setTimeout(() => {
         if (requestId !== state.processingId) return;
         state.worker?.terminate(); state.worker = null; state.workerDisabled = true;
@@ -188,18 +220,19 @@
 
   function runProcessingFallback(payload) {
     try {
-      const input = payload || { width: state.source.width, height: state.source.height, data: state.source.data, settings: processingSettings() };
+      const input = payload || { width: state.source.width, height: state.source.height, data: state.source.data, hints: state.hints, settings: processingSettings() };
       acceptResult(Core.processImage(input));
     } catch (error) { showProcessingError(error.message); }
   }
 
   function acceptResult(result) {
+    state.busy = false;
     state.result = result; state.mask = new Uint8Array(result.mask); state.paths = result.paths.map((path) => path.map((point) => [...point]));
     resultCanvas.width = result.width; resultCanvas.height = result.height;
     renderResult(); renderWarnings(result.analysis); updateExportSummary();
     $("#resultSize").textContent = `${result.width} × ${result.height} px`;
     $("#vectorCount").textContent = `${state.paths.length} Kontur${state.paths.length === 1 ? "" : "en"}`;
-    setProcessState("Vorlage aktuell"); fitView();
+    setProcessState("Vorlage aktuell"); applyZoom();
   }
 
   function path2D(points, width = state.result?.width || 1, mirrored = false) {
@@ -211,6 +244,7 @@
   }
 
   function selectedPaths(style = $("#outputStyle").value) {
+    if (style === "cutline") return state.paths.filter(path => polygonArea(path) > 0);
     if (style !== "inner" || state.paths.length < 2) return state.paths;
     let largest = 0, largestArea = -1;
     state.paths.forEach((path, index) => { const area = Math.abs(polygonArea(path)); if (area > largestArea) { largestArea = area; largest = index; } });
@@ -231,15 +265,25 @@
     const sx = width / state.result.width, sy = height / state.result.height;
     context.save(); context.scale(sx, sy);
     const combined = new Path2D(); for (const points of selectedPaths(style)) combined.addPath(path2D(points, state.result.width, mirrored));
-    context.fill(combined, "evenodd"); context.restore();
+    if (style === "cutline") {
+      context.strokeStyle = "#000"; context.lineJoin = "round";
+      context.lineWidth = Number($("#strokeMm").value) * state.result.width / Number($("#widthMm").value);
+      context.stroke(combined);
+    } else context.fill(combined, "evenodd");
+    context.restore();
   }
 
   function renderResult() {
     if (!state.result) return;
     renderPaths(resultCtx, resultCanvas.width, resultCanvas.height, { transparent: $("#transparentPreview").checked });
+    if ($("#overlayOriginal").checked && state.rawCanvas) {
+      resultCtx.save(); resultCtx.globalAlpha = Number($("#overlayOpacity").value) / 100;
+      if ($("#mirrorOutput").checked) { resultCtx.translate(resultCanvas.width, 0); resultCtx.scale(-1, 1); }
+      resultCtx.drawImage(state.rawCanvas, 0, 0, resultCanvas.width, resultCanvas.height); resultCtx.restore();
+    }
     if (state.tool === "nodes") {
       resultCtx.save(); resultCtx.fillStyle = "#d9a654"; resultCtx.strokeStyle = "#17130c"; resultCtx.lineWidth = 1;
-      for (const path of state.paths) for (const point of path) { resultCtx.beginPath(); resultCtx.arc(point[0], point[1], 2.8, 0, Math.PI * 2); resultCtx.fill(); resultCtx.stroke(); }
+      for (const path of state.paths) for (const point of path) { resultCtx.beginPath(); resultCtx.arc($("#mirrorOutput").checked ? resultCanvas.width - point[0] : point[0], point[1], 2.8, 0, Math.PI * 2); resultCtx.fill(); resultCtx.stroke(); }
       resultCtx.restore();
     }
   }
@@ -247,16 +291,16 @@
   function renderWarnings(analysis = state.result?.analysis) {
     const container = $("#warnings"); container.innerHTML = "";
     const warnings = analysis?.warnings || [];
-    $("#qualityTitle").textContent = warnings.length ? `${warnings.length} Hinweis${warnings.length === 1 ? "" : "e"} prüfen` : "Vorlage ist handwerklich plausibel";
+    $("#qualityTitle").textContent = warnings.length ? `${warnings.length} Hinweis${warnings.length === 1 ? "" : "e"} prüfen` : "Automatische Prüfung ohne auffälligen Befund";
     if (!warnings.length) {
-      const item = document.createElement("div"); item.className = "warning ok"; item.textContent = "Keine offenen Konturen, auffälligen Inseln oder zu schmalen Stege gefunden."; container.appendChild(item); return;
+      const item = document.createElement("div"); item.className = "warning ok"; item.textContent = "Keine auffälligen Inseln oder schmalen Bereiche in der Näherungsprüfung gefunden. Material, Werkzeug und tatsächliche Stegbreite am Ausdruck prüfen."; container.appendChild(item); return;
     }
     for (const warning of warnings) { const item = document.createElement("div"); item.className = "warning"; item.textContent = warning; container.appendChild(item); }
   }
 
   function snapshot() {
     if (!state.mask) return null;
-    return { mask: new Uint8Array(state.mask), paths: state.paths.map((path) => path.map((point) => [...point])), analysis: state.result.analysis };
+    return { mask: new Uint8Array(state.mask), paths: state.paths.map((path) => path.map((point) => [...point])), analysis: state.result.analysis, hints: new Uint8Array(state.hints) };
   }
 
   function pushHistory() {
@@ -265,16 +309,20 @@
   }
 
   function restoreSnapshot(item) {
+    window.clearTimeout(state.processingTimer); state.processingId++;
     state.mask = new Uint8Array(item.mask); state.paths = item.paths.map((path) => path.map((point) => [...point]));
+    state.hints = new Uint8Array(item.hints); renderSourcePreview();
     state.result.analysis = item.analysis; renderResult(); renderWarnings(); $("#vectorCount").textContent = `${state.paths.length} Konturen`; updateUndoButtons();
   }
 
   function undo() {
+    if (state.busy) return;
     if (!state.history.length) return;
     state.future.push(snapshot()); restoreSnapshot(state.history.pop());
   }
 
   function redo() {
+    if (state.busy) return;
     if (!state.future.length) return;
     state.history.push(snapshot()); restoreSnapshot(state.future.pop());
   }
@@ -283,19 +331,13 @@
 
   function canvasPoint(event, canvas = resultCanvas) {
     const rect = canvas.getBoundingClientRect();
-    return { x: Math.round((event.clientX - rect.left) * canvas.width / rect.width), y: Math.round((event.clientY - rect.top) * canvas.height / rect.height) };
+    let x = Math.round((event.clientX - rect.left) * canvas.width / rect.width);
+    if (canvas === resultCanvas && $("#mirrorOutput").checked) x = canvas.width - x;
+    return { x: Core.clamp(x, 0, canvas.width - 1), y: Core.clamp(Math.round((event.clientY - rect.top) * canvas.height / rect.height), 0, canvas.height - 1) };
   }
 
   function paintLine(a, b, value) {
-    const radius = Math.max(1, Number($("#brushSize").value) / 2), dx = b.x - a.x, dy = b.y - a.y, steps = Math.max(1, Math.ceil(Math.hypot(dx, dy)));
-    for (let step = 0; step <= steps; step++) {
-      const x = Math.round(a.x + dx * step / steps), y = Math.round(a.y + dy * step / steps);
-      for (let oy = -radius; oy <= radius; oy++) for (let ox = -radius; ox <= radius; ox++) {
-        if (ox * ox + oy * oy > radius * radius) continue;
-        const nx = x + ox, ny = y + oy;
-        if (nx >= 0 && ny >= 0 && nx < state.result.width && ny < state.result.height) state.mask[ny * state.result.width + nx] = value;
-      }
-    }
+    Core.drawThickLine(state.mask, state.result.width, state.result.height, a.y * state.result.width + a.x, b.y * state.result.width + b.x, Number($("#brushSize").value), value);
   }
 
   function finishRasterEdit() {
@@ -337,7 +379,7 @@
   }
 
   function pointerDown(event) {
-    if (!state.result) return;
+    if (!state.result || state.busy) return;
     if (state.tool === "pan") {
       const viewport = resultCanvas.closest(".canvas-viewport"); state.drawing = true;
       state.lastPoint = { x: event.clientX, y: event.clientY, left: viewport.scrollLeft, top: viewport.scrollTop }; resultCanvas.setPointerCapture(event.pointerId); return;
@@ -367,8 +409,10 @@
 
   function renderMaskPreview() {
     const image = resultCtx.createImageData(state.result.width, state.result.height);
+    const mirrored = $("#mirrorOutput").checked;
     for (let i = 0, p = 0; i < state.mask.length; i++, p += 4) {
-      const value = state.mask[i] ? 0 : 255; image.data[p] = image.data[p + 1] = image.data[p + 2] = value; image.data[p + 3] = 255;
+      const index = mirrored ? Math.floor(i / state.result.width) * state.result.width + state.result.width - 1 - i % state.result.width : i;
+      const value = state.mask[index] ? 0 : 255; image.data[p] = image.data[p + 1] = image.data[p + 2] = value; image.data[p + 3] = 255;
     }
     resultCtx.putImageData(image, 0, 0);
   }
@@ -385,15 +429,13 @@
   }
 
   function updateLockedHeight() {
-    if (!$("#lockRatio").checked || !state.aspect) return;
-    $("#heightMm").value = (Number($("#widthMm").value) / state.aspect).toFixed(1);
-    updateExportSummary();
+    if ($("#lockRatio").checked && state.aspect) $("#heightMm").value = (Number($("#widthMm").value) / state.aspect).toFixed(1);
+    updateExportSummary(); scheduleProcess();
   }
 
   function updateLockedWidth() {
-    if (!$("#lockRatio").checked || !state.aspect) return;
-    $("#widthMm").value = (Number($("#heightMm").value) * state.aspect).toFixed(1);
-    updateExportSummary();
+    if ($("#lockRatio").checked && state.aspect) $("#widthMm").value = (Number($("#heightMm").value) * state.aspect).toFixed(1);
+    updateExportSummary(); scheduleProcess();
   }
 
   function paperDimensions() {
@@ -439,13 +481,14 @@
     const pathData = selectedPaths(style).map((path) => svgPathData(path, mirrored)).join("");
     const background = style === "inverse" ? `<rect width="100%" height="100%" fill="#000"/>` : "";
     const fill = style === "inverse" ? "#fff" : "#000";
-    const svg = `<?xml version="1.0" encoding="UTF-8"?>\n<svg xmlns="http://www.w3.org/2000/svg" width="${width}mm" height="${height}mm" viewBox="0 0 ${state.result.width} ${state.result.height}">${background}<path d="${pathData}" fill="${fill}" fill-rule="evenodd"/></svg>`;
+    const paint = style === "cutline" ? `fill="none" stroke="#000" stroke-width="${Number($("#strokeMm").value) * state.result.width / width}" stroke-linejoin="round"` : `fill="${fill}" fill-rule="evenodd"`;
+    const svg = `<?xml version="1.0" encoding="UTF-8"?>\n<svg xmlns="http://www.w3.org/2000/svg" width="${width}mm" height="${height}mm" viewBox="0 0 ${state.result.width} ${state.result.height}">${background}<path d="${pathData}" ${paint}/></svg>`;
     downloadBlob(new Blob([svg], { type: "image/svg+xml" }), "svg");
   }
 
   function exportDXF() {
     const scaleX = Number($("#widthMm").value) / state.result.width, scaleY = Number($("#heightMm").value) / state.result.height, mirrored = $("#mirrorOutput").checked;
-    const lines = ["0","SECTION","2","ENTITIES"];
+    const lines = ["0","SECTION","2","HEADER","9","$INSUNITS","70","4","0","ENDSEC","0","SECTION","2","ENTITIES"];
     for (const path of selectedPaths()) {
       lines.push("0","LWPOLYLINE","8","OUTLINES","90",String(path.length),"70","1");
       for (const point of path) { const x = (mirrored ? state.result.width - point[0] : point[0]) * scaleX, y = (state.result.height - point[1]) * scaleY; lines.push("10",x.toFixed(4),"20",y.toFixed(4)); }
@@ -529,7 +572,7 @@
       for (let i = 1; i < path.length; i++) { const point = convert(path[i]); content += `${point[0].toFixed(2)} ${point[1].toFixed(2)} l\n`; }
       content += "h\n";
     }
-    return content + "f*\n";
+    return content + (style === "cutline" ? `0 0 0 RG ${(Number($("#strokeMm").value) * 72 / 25.4).toFixed(3)} w 1 j S\n` : "f*\n");
   }
 
   function createPDF() {
@@ -568,6 +611,7 @@
   }
 
   function exportFile(format) {
+    if (state.busy) { toast("Bitte die aktuelle Berechnung abwarten."); return; }
     if (!state.result || !state.paths.length) { toast("Zuerst ein Bild laden und Konturen erzeugen.", true); return; }
     try {
       if (format === "png" || format === "jpg") exportRaster(format);
@@ -580,6 +624,7 @@
   }
 
   function beginCrop() {
+    $("#sourceTool").value = "inspect";
     state.cropMode = !state.cropMode; state.cropRect = null; $("#cropOverlay").hidden = true;
     $("#cropButton").textContent = state.cropMode ? "✓ Bereich ziehen" : "⌗ Zuschneiden";
     sourceCanvas.style.cursor = state.cropMode ? "crosshair" : "default";
@@ -597,16 +642,76 @@
     if (!state.cropMode || !state.cropStart) return; sourceCanvas.releasePointerCapture?.(event.pointerId); state.cropStart = null;
     const crop = state.cropRect;
     if (!crop || crop.width < 12 || crop.height < 12) { toast("Der gewählte Ausschnitt ist zu klein.", true); return; }
+    sourceCtx.putImageData(state.source, 0, 0);
     const image = sourceCtx.getImageData(crop.x, crop.y, crop.width, crop.height); state.cropMode = false; $("#cropButton").textContent = "⌗ Zuschneiden"; $("#cropOverlay").hidden = true; sourceCanvas.style.cursor = "default"; applySourceImage(image);
   }
 
+  function sourcePointerDown(event) {
+    if (!state.source || state.busy) return;
+    if ($("#sourceTool").value === "inspect") { cropPointerDown(event); return; }
+    pushHistory(); state.sourceDrawing = true; state.sourcePoint = canvasPoint(event, sourceCanvas);
+    sourceCanvas.setPointerCapture(event.pointerId); paintSourceHint(state.sourcePoint);
+  }
+
+  function paintSourceHint(point) {
+    Core.drawThickLine(state.hints, state.source.width, state.source.height, state.sourcePoint.y * state.source.width + state.sourcePoint.x, point.y * state.source.width + point.x, Number($("#selectionBrush").value), $("#sourceTool").value === "keep" ? 1 : 2);
+    state.sourcePoint = point; renderSourcePreview();
+  }
+
+  function sourcePointerMove(event) {
+    if (state.sourceDrawing) paintSourceHint(canvasPoint(event, sourceCanvas));
+    else cropPointerMove(event);
+  }
+
+  function sourcePointerUp(event) {
+    if (!state.sourceDrawing) { cropPointerUp(event); return; }
+    state.sourceDrawing = false; sourceCanvas.releasePointerCapture?.(event.pointerId); scheduleProcess(true);
+  }
+
+  function updateDetectionHelp() {
+    const method = $("#detection").value;
+    const descriptions = {
+      color: "Gut für farbige Motive auf ruhigem Grund. Bei schwierigen Rändern das Motiv grün und den Hintergrund rot markieren.",
+      otsu: "Automatische Helligkeitsschwelle für klare Grafiken und gleichmäßig beleuchtete Schrift. Helle Motive bei Bedarf umkehren.",
+      threshold: "Mit der Helligkeitsschwelle bestimmen, welche Töne zur Vorlage gehören. Höher = mehr dunkle Bildteile.",
+      adaptive: "Passt die Schwelle lokal an. Für fotografierte Schrift und Linien auf Papier mit Schatten; keine Texterkennung (OCR).",
+      alpha: "Nutzt ausschließlich den Transparenzkanal. Für freigestellte PNG/SVG; ein vollständig deckendes Bild ergibt eine volle Fläche."
+    };
+    $("#detectionHelp").textContent = descriptions[method];
+    $("#toneThreshold").disabled = !["threshold", "alpha"].includes(method);
+    for (const id of ["localRadius", "adaptiveBias"]) $(`#${id}`).disabled = method !== "adaptive";
+    $("#threshold").disabled = method !== "color";
+    $("#contrast").disabled = method === "alpha" || method === "color";
+    $("#invertSource").disabled = method === "alpha" || method === "color";
+    updateModeControls();
+  }
+
+  function updateModeControls() {
+    $("#autoBridges").disabled = state.mode !== "stencil";
+    $("#innerLines").disabled = state.mode !== "outline";
+    $("#hatching").disabled = state.mode !== "lineart";
+    $("#lineWidth").disabled = ["silhouette", "stencil"].includes(state.mode);
+    $("#removeBackground").disabled = ["silhouette", "stencil"].includes(state.mode);
+    $("#detail").disabled = $("#detection").value !== "color" && !(state.mode === "lineart" && $("#hatching").checked);
+    $("#strokeMm").disabled = $("#outputStyle").value !== "cutline";
+    $$('[data-mode]').forEach(button => { button.setAttribute("role", "radio"); button.setAttribute("aria-checked", String(button.dataset.mode === state.mode)); });
+  }
+
+  function applyRepair(action) {
+    if (!state.result || state.busy) { toast("Zuerst die Bildberechnung abwarten."); return; }
+    pushHistory(); state.mask = Core.repairMask(state.mask, state.result.width, state.result.height, action, processingSettings());
+    finishRasterEdit(); toast("Reparatur angewendet · mit Rückgängig überprüfbar.");
+  }
+
   function applyPreset(name) {
-    const preset = presets[name]; if (!preset) return;
+    const selected = presets[name]; if (!selected) return;
+    const preset = { toneThreshold: 128, contrast: 0, localRadius: 25, adaptiveBias: 0, gapClose: 1, opening: 0, fillHoles: false, removeBackground: true, preserveDetails: true, autoBridges: false, invertSource: false, detection: name === "document" ? "otsu" : "color", ...selected };
     state.mode = preset.mode;
-    for (const key of ["detail", "threshold", "smoothing", "simplify", "lineWidth"]) { $(`#${key}`).value = preset[key]; updateRangeLabel(key); }
-    for (const key of ["innerLines", "hatching", "keepMain", "autoBridges", "preserveDetails"]) {
-      if (Object.hasOwn(preset, key)) $(`#${key}`).checked = Boolean(preset[key]);
-    }
+    for (const key of rangeIds) { $(`#${key}`).value = preset[key]; updateRangeLabel(key); }
+    for (const key of processingChecks) $(`#${key}`).checked = Boolean(preset[key]);
+    $("#detection").value = preset.detection; updateDetectionHelp();
+    $("#outputStyle").value = name === "saw-simple" ? "cutline" : "outline";
+    updateModeControls();
     $$('[data-mode]').forEach((button) => button.classList.toggle("active", button.dataset.mode === state.mode)); scheduleProcess();
   }
 
@@ -621,13 +726,17 @@
   dropzone.addEventListener("drop", (event) => importFile(event.dataTransfer.files[0]));
   $$('[data-transform]').forEach((button) => button.addEventListener("click", () => transformSource(button.dataset.transform)));
   $("#cropButton").addEventListener("click", beginCrop);
-  sourceCanvas.addEventListener("pointerdown", cropPointerDown); sourceCanvas.addEventListener("pointermove", cropPointerMove); sourceCanvas.addEventListener("pointerup", cropPointerUp);
+  sourceCanvas.addEventListener("pointerdown", sourcePointerDown); sourceCanvas.addEventListener("pointermove", sourcePointerMove); sourceCanvas.addEventListener("pointerup", sourcePointerUp); sourceCanvas.addEventListener("pointercancel", sourcePointerUp);
+  $("#sourceTool").addEventListener("change", () => { state.cropMode = false; state.cropStart = null; $("#cropOverlay").hidden = true; $("#cropButton").textContent = "⌗ Zuschneiden"; sourceCanvas.style.cursor = $("#sourceTool").value === "inspect" ? "default" : "crosshair"; });
+  $("#selectionBrush").addEventListener("input", () => $("#selectionBrushValue").textContent = `${$("#selectionBrush").value} px`);
+  $("#clearHints").addEventListener("click", () => { if (!state.hints || state.busy) return; pushHistory(); state.hints.fill(0); renderSourcePreview(); scheduleProcess(true); });
   $("#resetAll").addEventListener("click", () => { if (state.original) { applySourceImage(cloneImageData(state.original)); toast("Originalbild und Verarbeitung wurden wiederhergestellt."); } });
 
   $("#preset").addEventListener("change", (event) => applyPreset(event.target.value));
-  $$('[data-mode]').forEach((button) => button.addEventListener("click", () => { state.mode = button.dataset.mode; $$('[data-mode]').forEach((item) => item.classList.toggle("active", item === button)); $("#preset").value = "custom"; scheduleProcess(); }));
-  for (const id of ["detail", "threshold", "smoothing", "simplify", "lineWidth"]) $(`#${id}`).addEventListener("input", () => { updateRangeLabel(id); $("#preset").value = "custom"; scheduleProcess(); });
-  for (const id of ["removeBackground", "keepMain", "innerLines", "hatching", "autoBridges", "preserveDetails", "invertSource"]) $(`#${id}`).addEventListener("change", () => { $("#preset").value = "custom"; scheduleProcess(); });
+  $$('[data-mode]').forEach((button) => button.addEventListener("click", () => { state.mode = button.dataset.mode; $$('[data-mode]').forEach((item) => item.classList.toggle("active", item === button)); updateModeControls(); $("#preset").value = "custom"; scheduleProcess(); }));
+  for (const id of rangeIds) $(`#${id}`).addEventListener("input", () => { updateRangeLabel(id); $("#preset").value = "custom"; scheduleProcess(); });
+  for (const id of processingChecks) $(`#${id}`).addEventListener("change", () => { updateModeControls(); $("#preset").value = "custom"; scheduleProcess(); });
+  $("#detection").addEventListener("change", () => { updateDetectionHelp(); $("#preset").value = "custom"; scheduleProcess(); });
   for (const id of ["minDetailMm", "minBridgeMm"]) $(`#${id}`).addEventListener("change", () => scheduleProcess());
 
   $("#widthMm").addEventListener("input", updateLockedHeight); $("#heightMm").addEventListener("input", updateLockedWidth);
@@ -645,7 +754,10 @@
 
   $$('[data-tool]').forEach((button) => button.addEventListener("click", () => { state.tool = button.dataset.tool; $$('[data-tool]').forEach((item) => item.classList.toggle("active", item === button)); resultCanvas.style.cursor = state.tool === "pan" ? "grab" : state.tool === "nodes" ? "move" : "crosshair"; renderResult(); }));
   $("#brushSize").addEventListener("input", () => $("#brushValue").textContent = `${$("#brushSize").value} px`);
-  $("#mirrorOutput").addEventListener("change", renderResult); $("#outputStyle").addEventListener("change", renderResult); $("#transparentPreview").addEventListener("change", renderResult);
+  $("#mirrorOutput").addEventListener("change", renderResult); $("#outputStyle").addEventListener("change", () => { updateModeControls(); renderResult(); }); $("#transparentPreview").addEventListener("change", renderResult);
+  $("#overlayOriginal").addEventListener("change", renderResult); $("#overlayOpacity").addEventListener("input", () => { $("#overlayOpacityValue").textContent = `${$("#overlayOpacity").value} %`; renderResult(); });
+  $("#strokeMm").addEventListener("input", renderResult);
+  $$('[data-repair]').forEach(button => button.addEventListener("click", () => applyRepair(button.dataset.repair)));
   resultCanvas.addEventListener("pointerdown", pointerDown); resultCanvas.addEventListener("pointermove", pointerMove); resultCanvas.addEventListener("pointerup", pointerUp); resultCanvas.addEventListener("pointercancel", pointerUp);
   $("#undo").addEventListener("click", undo); $("#redo").addEventListener("click", redo);
   $("#reanalyze").addEventListener("click", () => scheduleProcess(true));

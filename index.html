@@ -6,7 +6,7 @@
   <meta name="theme-color" content="#171914">
   <meta name="description" content="Lokales Werkzeug für maßhaltige Konturen, Schablonen und Werkvorlagen.">
   <title>Outlines · Werkvorlagen</title>
-  <link rel="stylesheet" href="styles.css?v=1.2.0">
+  <link rel="stylesheet" href="styles.css?v=1.3.0">
 </head>
 <body>
   <header class="topbar">
@@ -39,6 +39,14 @@
           <button type="button" data-transform="flip-x" disabled>↔ Spiegeln</button>
           <button type="button" id="cropButton" disabled>⌗ Zuschneiden</button>
         </div>
+        <details class="fine-controls"><summary>Motiv von Hand korrigieren</summary>
+        <label class="field">Werkzeug im Original
+          <select id="sourceTool"><option value="inspect">Ansehen / Zuschneiden</option><option value="keep">Motiv behalten · grün markieren</option><option value="exclude">Hintergrund entfernen · rot markieren</option></select>
+        </label>
+        <div class="range-field"><label for="selectionBrush">Markierpinsel <output id="selectionBrushValue">24 px</output></label><input id="selectionBrush" type="range" min="4" max="100" value="24" step="2"></div>
+        <button id="clearHints" class="ghost-button full-width" type="button" disabled>Motivmarkierungen löschen</button>
+        <p class="control-help">Markierungen im Original bleiben beim Ändern der Regler erhalten. Zuschneiden oder Drehen setzt sie zurück.</p>
+        </details>
       </section>
 
       <section class="panel">
@@ -51,6 +59,7 @@
             <option value="carve-fine">Schnitzen · Fein</option>
             <option value="pyro">Brandmalerei</option>
             <option value="document">Dokument · Schrift & Symbole</option>
+            <option value="scan">Scan / Foto mit Schatten</option>
             <option value="stencil">Schablone</option>
             <option value="custom">Benutzerdefiniert</option>
           </select>
@@ -61,6 +70,22 @@
           <button type="button" data-mode="lineart"><span>≋</span><strong>Linienbild</strong><small>variable Details</small></button>
           <button type="button" data-mode="stencil"><span>▣</span><strong>Schablone</strong><small>ausschneidbare Flächen</small></button>
         </div>
+
+        <label class="field">Motiv erkennen mit
+          <select id="detection"><option value="color">Automatisch · Abstand zur Hintergrundfarbe</option><option value="otsu">Helligkeit · automatisch</option><option value="threshold">Helligkeit · Schwellwert selbst setzen</option><option value="adaptive">Lokal · Schrift / ungleichmäßiges Licht</option><option value="alpha">Transparenz · freigestellte Grafik</option></select>
+        </label>
+        <p id="detectionHelp" class="control-help" aria-live="polite"></p>
+        <details class="fine-controls">
+          <summary>Erkennung und Bereinigung fein einstellen</summary>
+          <div class="range-field"><label for="toneThreshold">Helligkeits- / Alpha-Schwelle <output id="toneThresholdValue">128</output></label><input id="toneThreshold" type="range" min="1" max="254" value="128"></div>
+          <div class="range-field"><label for="contrast">Kontrast <output id="contrastValue">0</output></label><input id="contrast" type="range" min="-50" max="100" value="0"></div>
+          <div class="range-field"><label for="localRadius">Lokaler Umkreis (px) <output id="localRadiusValue">25</output></label><input id="localRadius" type="range" min="3" max="80" value="25"></div>
+          <div class="range-field"><label for="adaptiveBias">Lokale Empfindlichkeit <output id="adaptiveBiasValue">0</output></label><input id="adaptiveBias" type="range" min="-20" max="20" value="0"></div>
+          <div class="range-field"><label for="gapClose">Lücken schließen (px) <output id="gapCloseValue">1</output></label><input id="gapClose" type="range" min="0" max="4" value="1"></div>
+          <div class="range-field"><label for="opening">Störpunkte glätten (px) <output id="openingValue">0</output></label><input id="opening" type="range" min="0" max="3" value="0"></div>
+          <label class="inline-check"><input id="fillHoles" type="checkbox"> Innenlöcher vor der Konturerkennung füllen</label>
+          <p class="control-help">Das Füllen entfernt auch Buchstabenlöcher und Aussparungen. Für Schrift und Schablonen normalerweise ausgeschaltet lassen.</p>
+        </details>
 
         <div class="range-field"><label for="detail">Detailtiefe <output id="detailValue">42</output></label><input id="detail" type="range" min="0" max="100" value="42"></div>
         <div class="range-field"><label for="threshold">Motivtrennung <output id="thresholdValue">24</output></label><input id="threshold" type="range" min="4" max="60" value="24"></div>
@@ -136,7 +161,7 @@
 
         <div id="canvasPair" class="canvas-pair">
           <article id="originalPane" class="canvas-pane">
-            <header><div><span>ORIGINAL</span><strong id="originalSize">–</strong></div><small>Ziehen zum Zuschneiden</small></header>
+            <header><div><span>ORIGINAL</span><strong id="originalSize">–</strong></div><small>Zuschneiden oder Motiv markieren</small></header>
             <div class="canvas-viewport"><div class="canvas-stage"><canvas id="originalCanvas"></canvas><div id="cropOverlay" class="crop-overlay" hidden></div></div></div>
           </article>
           <article id="resultPane" class="canvas-pane result-pane">
@@ -144,6 +169,8 @@
             <div class="canvas-viewport checker"><div class="canvas-stage"><canvas id="resultCanvas"></canvas></div></div>
           </article>
         </div>
+
+        <div class="comparison-tools"><label><input id="overlayOriginal" type="checkbox"> Original über die Vorlage legen</label><label>Deckkraft <input id="overlayOpacity" type="range" min="5" max="70" value="25"><output id="overlayOpacityValue">25 %</output></label><small>Nur Vorschau · wird nicht exportiert</small></div>
 
         <div class="editor-tools" aria-label="Manuelle Korrektur">
           <span>MANUELL KORRIGIEREN</span>
@@ -160,12 +187,17 @@
         <section class="quality-panel">
           <div class="quality-head"><div><span>WERKSTATT-PRÜFUNG</span><strong id="qualityTitle">Vorlage wird geprüft</strong></div><button id="reanalyze" class="ghost-button" type="button">Neu berechnen</button></div>
           <div id="warnings" class="warnings" aria-live="polite"></div>
+          <div class="repair-tools" aria-label="Vorlage reparieren">
+            <button type="button" data-repair="speckles">Kleine Inseln entfernen</button><button type="button" data-repair="close">Kleine Lücken schließen</button><button type="button" data-repair="fill">Löcher füllen</button><button type="button" data-repair="thicken">Flächen verstärken</button><button type="button" data-repair="thin">Flächen ausdünnen</button><button type="button" data-repair="bridges">Schabloneninseln sichern</button><button type="button" data-repair="join">Getrennte Formen verbinden</button>
+          </div>
+          <p class="control-help">Reparaturen sind rückgängig machbar. Neue Erkennungsparameter berechnen die Vorlage neu und ersetzen manuelle Ergebnisänderungen. Schwarze Flächen gelten bei Schablonen als Ausschnitt; helle Inseln werden durch herausgenommene Stege mit dem Außenmaterial verbunden.</p>
         </section>
 
         <section class="export-panel">
           <div><span class="eyebrow">04 · AUSGABE</span><h2>Maßhaltig exportieren</h2><p id="exportSummary">120 mm breit · A4 · 300 DPI</p></div>
           <div class="export-options">
-            <label>Darstellung<select id="outputStyle"><option value="outline">Schwarze Umrisslinie</option><option value="filled">Schwarze Form</option><option value="inverse">Weiße Form auf Schwarz</option><option value="inner">Nur Innenkonturen</option></select></label>
+            <label>Darstellung<select id="outputStyle"><option value="outline">Erkannte Linien / Umrisse</option><option value="cutline">Schnittkontur · nur Außenformen</option><option value="filled">Schwarze Form</option><option value="inverse">Weiße Form auf Schwarz</option><option value="inner">Nur Innenkonturen</option></select></label>
+            <label>Schnittlinie (mm)<input id="strokeMm" type="number" min="0.1" max="3" step="0.05" value="0.25"></label>
             <label>DPI<select id="dpi"><option>150</option><option selected>300</option><option>600</option></select></label>
             <label>JPG-Qualität<input id="jpgQuality" type="range" min="60" max="100" value="92"><output id="jpgQualityValue">92 %</output></label>
             <label>Werkplan-Präzision<select id="werkplanPrecision"><option value="0.35">Fein · 0,35 mm</option><option value="0.75" selected>Werkstatt · 0,75 mm</option><option value="1.5">Grob · 1,5 mm</option></select></label>
@@ -185,7 +217,7 @@
   </main>
 
   <div id="toast" class="toast" role="status" hidden></div>
-  <script src="outlines-core.js?v=1.2.2"></script>
-  <script src="app.js?v=1.2.2"></script>
+  <script src="outlines-core.js?v=1.3.0"></script>
+  <script src="app.js?v=1.3.0"></script>
 </body>
 </html>
