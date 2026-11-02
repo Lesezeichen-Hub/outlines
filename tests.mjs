@@ -3,6 +3,7 @@ import { createRequire } from "node:module";
 
 const require = createRequire(import.meta.url);
 const Core = require("./outlines-core.js");
+const Relief = require("./relief-core.js");
 
 function image(width, height, pixel) {
   const data = new Uint8ClampedArray(width * height * 4);
@@ -166,3 +167,75 @@ function image(width, height, pixel) {
 }
 
 console.log("Outlines core: 14 Testgruppen erfolgreich.");
+
+{
+  const p = Relief.project(4, 4, { widthMm: 40, heightMm: 40, thicknessMm: 20, reliefMm: 8 });
+  const a = new Uint8Array(16), b = new Uint8Array(16); a[5] = a[6] = 1; b[6] = b[10] = 1;
+  p.layers.push(Relief.layer("unten", 3, a), Relief.layer("oben", 6, b));
+  let map = Relief.compose(p);
+  assert.equal(map.values[6], 6);
+  assert.equal(map.overlaps[6], 1);
+  assert.equal(map.values[5], 3);
+  p.settings.overlap = "cut";
+  assert.equal(Relief.compose(p).values[6], 0, "Spätere Maske muss Überlappung ausschneiden");
+  p.settings.overlap = "order"; p.layers.reverse();
+  assert.equal(Relief.compose(p).values[6], 3);
+  assert.deepEqual([...Relief.maskOperation(a, b, "subtract")].filter(Boolean).length, 1);
+  assert.equal(Relief.maskOperation(a, b, "union")[10], 1);
+  p.layers[1].mask[4] = 1;
+  p.settings.widthMm = 80; p.settings.fit = "fit";
+  assert.equal(Relief.compose(p).values[4], 0, "Einpassen muss Randbereiche frei lassen");
+  p.settings.fit = "stretch"; p.settings.widthMm = 40;
+  p.layers[0].height = 30;
+  assert.equal(Relief.compose(p).values[10], 8, "Reliefhöhe muss begrenzt sein");
+  p.layers[0].height = 6;
+  map = Relief.compose(p);
+  const cut = Relief.section(map, p, { x: 0, y: 0 }, { x: 3, y: 0 });
+  assert.equal(cut.lengthMm, 40);
+  assert.equal(cut.points.length, 4);
+  const before = Relief.serialize(p);
+  Relief.paint(p, map, 1, 1, 1, "raise", 30);
+  assert.ok(map.values.every(z => z <= 8 && z >= 0));
+  const restored = Relief.deserialize(before);
+  assert.equal(Relief.compose(restored).values[5], 3);
+  assert.equal(Relief.smooth(new Float32Array([0, 0, 0, 8, 8, 8, 0, 0, 0]), 3, 3, 1)[4] > 0, true);
+  const rounded = Relief.project(5,5); const spot=new Uint8Array(25); spot[12]=1;
+  rounded.layers.push(Relief.layer("rund",8,spot));rounded.layers[0].edge="rounded";rounded.layers[0].smoothing=1;
+  assert.ok(Relief.compose(rounded).values[11]>0,"Ebenenrundung muss Übergänge erzeugen");
+  const lines = Relief.contours({ width: 3, height: 3, values: new Float32Array([0, 0, 0, 0, 8, 0, 0, 0, 0]) }, 4);
+  assert.equal(lines.length, 4);
+  const borderLines=Relief.contours({width:3,height:3,values:new Float32Array(9).fill(8)},4);
+  assert.ok(borderLines.length>0&&borderLines.every(segment=>segment.every(([x,y])=>x>=0&&x<=2&&y>=0&&y<=2)),"Randkonturen müssen erhalten bleiben");
+  const mesh = Relief.stl(Relief.compose(restored), restored);
+  assert.equal((mesh.match(/facet normal/g) || []).length, 60, "STL muss Deck-, Boden- und Seitenflächen enthalten");
+  assert.ok(mesh.includes("vertex 0 0 0") && mesh.includes("solid relief_mm"));
+  assert.ok(mesh.includes("facet normal 0 0 1"), "Deckfläche muss nach außen zeigen");
+  const vertices = [...mesh.matchAll(/vertex ([^\n]+)/g)].map(match => match[1]);
+  const edgeCounts = new Map();
+  for(let i=0;i<vertices.length;i+=3)for(const [a,b] of [[0,1],[1,2],[2,0]]){
+    const key=[vertices[i+a],vertices[i+b]].sort().join("|");edgeCounts.set(key,(edgeCounts.get(key)||0)+1);
+  }
+  assert.ok([...edgeCounts.values()].every(count=>count===2),"STL muss eine geschlossene zweimannigfaltige Oberfläche bilden");
+  const pixels = new Uint8ClampedArray(4*4*4); for(let i=0;i<16;i++) pixels.set(i<8?[20,20,20,255]:[230,230,230,255],i*4);
+  const proposed = Relief.suggest(4,4,pixels,"brightness",2);
+  assert.equal(proposed.length,2); assert.equal(proposed[0][0],1); assert.equal(proposed[1][15],1);
+  assert.equal(Relief.suggest(4,4,pixels,"color",2).length,2);
+  assert.equal(Relief.suggest(4,4,pixels,"edges",2,50,new Uint8Array(16).fill(1)).length,2);
+  const report = Relief.analyze(Relief.compose(restored), restored, 15, 30);
+  assert.ok(report.volumeMm3 > 0 && report.minRemainingMm >= 12);
+  assert.ok(Number.isFinite(report.thinRegions) && Number.isFinite(report.narrowCorePixels));
+  const narrow=Relief.project(7,7,{widthMm:70,heightMm:70}),cross=new Uint8Array(49);
+  for(let i=1;i<6;i++){cross[3*7+i]=1;cross[i*7+3]=1;}
+  narrow.layers.push(Relief.layer("Kreuz",8,cross));
+  assert.equal(Relief.analyze(Relief.compose(narrow),narrow,40).thinRegions,1,"Distanzprüfung muss auch lange, schmale Formen erkennen");
+  assert.ok(Relief.analyze(Relief.compose(narrow),narrow,30).narrowCorePixels>0,"Lokale Engstellen müssen erkannt werden");
+  const sheets=Relief.sheets(restored,Relief.compose(restored),1,true);
+  assert.equal(sheets.length,3,"Gesamtvorlage und ein Blatt je Ebene");
+  assert.ok(sheets[0].paths.length>0&&sheets[1].paths.length>0);
+  restored.name="A & B";
+  const layerSvg=Relief.svg(restored,Relief.compose(restored),1,"layers",true);
+  assert.ok(layerSvg.includes('width="40mm"')&&layerSvg.includes('A &amp; B')&&layerSvg.includes('data-sheet="Ebene:'));
+  assert.ok(!layerSvg.includes('data-sheet="Gesamtvorlage"'));
+  assert.throws(() => Relief.project(2000, 2000), /zu große/);
+  console.log("Relief core: Masken, Priorität, mm, Grenzen, Glättung, Isolinien, Schnitt und Wiederherstellung erfolgreich.");
+}

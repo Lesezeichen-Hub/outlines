@@ -170,7 +170,7 @@
     if (state.worker) return state.worker;
     if (state.workerDisabled || !("Worker" in window)) return null;
     try {
-      state.worker = new Worker(new URL("worker.js?v=1.3.0", window.location.href));
+      state.worker = new Worker(new URL("worker.js?v=1.4.0", window.location.href));
     } catch (error) {
       state.workerDisabled = true;
       console.warn("Outlines: Web Worker nicht verfügbar, Verarbeitung im Hauptfenster.", error);
@@ -233,6 +233,7 @@
     $("#resultSize").textContent = `${result.width} × ${result.height} px`;
     $("#vectorCount").textContent = `${state.paths.length} Kontur${state.paths.length === 1 ? "" : "en"}`;
     setProcessState("Vorlage aktuell"); applyZoom();
+    window.ReliefUI?.sourceChanged();
   }
 
   function path2D(points, width = state.result?.width || 1, mirrored = false) {
@@ -486,14 +487,14 @@
     downloadBlob(new Blob([svg], { type: "image/svg+xml" }), "svg");
   }
 
-  function exportDXF() {
-    const scaleX = Number($("#widthMm").value) / state.result.width, scaleY = Number($("#heightMm").value) / state.result.height, mirrored = $("#mirrorOutput").checked;
+  function exportDXF(relief = null) {
+    const scaleX = Number(relief?.widthMm ?? $("#widthMm").value) / (relief?.width || state.result.width), scaleY = Number(relief?.heightMm ?? $("#heightMm").value) / (relief?.height || state.result.height), mirrored = relief ? !!relief.mirrored : $("#mirrorOutput").checked;
     const lines = ["0","SECTION","2","HEADER","9","$INSUNITS","70","4","0","ENDSEC","0","SECTION","2","ENTITIES"];
-    for (const path of selectedPaths()) {
-      lines.push("0","LWPOLYLINE","8","OUTLINES","90",String(path.length),"70","1");
-      for (const point of path) { const x = (mirrored ? state.result.width - point[0] : point[0]) * scaleX, y = (state.result.height - point[1]) * scaleY; lines.push("10",x.toFixed(4),"20",y.toFixed(4)); }
+    for (const path of (relief?.paths || selectedPaths())) {
+      lines.push("0","LWPOLYLINE","8",relief ? "RELIEF" : "OUTLINES","90",String(path.length),"70",relief ? "0" : "1");
+      for (const point of path) { const x = (mirrored ? (relief?.width || state.result.width) - point[0] : point[0]) * scaleX, y = ((relief?.height || state.result.height) - point[1]) * scaleY; lines.push("10",x.toFixed(4),"20",y.toFixed(4)); }
     }
-    lines.push("0","ENDSEC","0","EOF"); downloadBlob(new Blob([lines.join("\r\n")], { type: "application/dxf" }), "dxf");
+    lines.push("0","ENDSEC","0","EOF"); const blob = new Blob([lines.join("\r\n")], { type: "application/dxf" }); if (relief) return blob; downloadBlob(blob, "dxf");
   }
 
   function createWerkplanProject() {
@@ -559,46 +560,58 @@
     toast(`${project.objects.length} editierbare Form${project.objects.length === 1 ? "" : "en"} für Werkplan exportiert.`);
   }
 
-  function pdfPathCommands(tileX, tileY, marginPt, pageHeightPt, motifWPt, motifHPt, style) {
-    const sx = motifWPt / state.result.width, sy = motifHPt / state.result.height, mirrored = $("#mirrorOutput").checked;
+  function pdfPathCommands(tileX, tileY, marginPt, pageHeightPt, motifWPt, motifHPt, style, relief = null) {
+    const sx = motifWPt / (relief?.width || state.result.width), sy = motifHPt / (relief?.height || state.result.height), mirrored = relief ? !!relief.mirrored : $("#mirrorOutput").checked;
     let content = style === "inverse" ? `0 0 0 rg 0 0 ${paperDimensions()[0] * 72 / 25.4} ${pageHeightPt} re f\n1 1 1 rg\n` : "0 0 0 rg\n";
-    for (const path of selectedPaths(style)) {
-      if (path.length < 3) continue;
+    for (const path of (relief?.paths || selectedPaths(style))) {
+      if (path.length < (relief ? 2 : 3)) continue;
       const convert = (point) => {
-        const px = mirrored ? state.result.width - point[0] : point[0];
+        const px = mirrored ? (relief?.width || state.result.width) - point[0] : point[0];
         return [marginPt + px * sx - tileX, pageHeightPt - marginPt - point[1] * sy + tileY];
       };
       const first = convert(path[0]); content += `${first[0].toFixed(2)} ${first[1].toFixed(2)} m\n`;
       for (let i = 1; i < path.length; i++) { const point = convert(path[i]); content += `${point[0].toFixed(2)} ${point[1].toFixed(2)} l\n`; }
-      content += "h\n";
+      if (!relief) content += "h\n";
     }
-    return content + (style === "cutline" ? `0 0 0 RG ${(Number($("#strokeMm").value) * 72 / 25.4).toFixed(3)} w 1 j S\n` : "f*\n");
+    return content + (relief ? "0 0 0 RG .5 w S\n" : style === "cutline" ? `0 0 0 RG ${(Number($("#strokeMm").value) * 72 / 25.4).toFixed(3)} w 1 j S\n` : "f*\n");
   }
 
-  function createPDF() {
+  function createPDF(relief = null) {
     const mmToPt = 72 / 25.4, [paperW, paperH] = paperDimensions(), pageW = paperW * mmToPt, pageH = paperH * mmToPt, margin = 10 * mmToPt;
-    const motifW = Number($("#widthMm").value) * mmToPt, motifH = Number($("#heightMm").value) * mmToPt;
+    const motifW = Number(relief?.widthMm ?? $("#widthMm").value) * mmToPt, motifH = Number(relief?.heightMm ?? $("#heightMm").value) * mmToPt;
     const overlap = $("#registrationMarks").checked ? 8 * mmToPt : 0, usableW = pageW - margin * 2, usableH = pageH - margin * 2;
     const pagesX = $("#tilePages").checked ? Math.max(1, Math.ceil(Math.max(0, motifW - overlap) / Math.max(1, usableW - overlap))) : 1;
     const pagesY = $("#tilePages").checked ? Math.max(1, Math.ceil(Math.max(0, motifH - overlap) / Math.max(1, usableH - overlap))) : 1;
-    const pageContents = [];
-    for (let row = 0; row < pagesY; row++) for (let column = 0; column < pagesX; column++) {
+    const pageContents = [], reliefSheets = relief?.sheets?.length ? relief.sheets : [relief];
+    const pdfText = (value) => String(value || "").normalize("NFKD").replace(/[\u0300-\u036f]/g, "").replace(/[^\x20-\x7e]/g, "?").replace(/[\\()]/g, "\\$&").slice(0, 110);
+    for (const [sheetIndex, sheet] of reliefSheets.entries()) for (let row = 0; row < pagesY; row++) for (let column = 0; column < pagesX; column++) {
+      if (sheet?.singlePage && (row || column)) continue;
       const tileX = column * (usableW - overlap), tileY = row * (usableH - overlap);
       let content = `q\n${margin.toFixed(2)} ${margin.toFixed(2)} ${usableW.toFixed(2)} ${usableH.toFixed(2)} re W n\n`;
-      content += pdfPathCommands(tileX, tileY, margin, pageH, motifW, motifH, $("#outputStyle").value);
+      const pageRelief = relief ? { ...relief, paths: sheet.paths || relief.paths } : null;
+      content += pdfPathCommands(tileX, tileY, margin, pageH, motifW, motifH, relief ? "outline" : $("#outputStyle").value, pageRelief);
       content += "Q\n0 0 0 RG .5 w\n";
       if ($("#registrationMarks").checked && pagesX * pagesY > 1) {
         const marks = [[margin,margin],[pageW-margin,margin],[margin,pageH-margin],[pageW-margin,pageH-margin]];
         for (const [x,y] of marks) content += `${(x-5).toFixed(2)} ${y.toFixed(2)} m ${(x+5).toFixed(2)} ${y.toFixed(2)} l S\n${x.toFixed(2)} ${(y-5).toFixed(2)} m ${x.toFixed(2)} ${(y+5).toFixed(2)} l S\n`;
       }
       if ($("#controlSquare").checked && row === pagesY - 1 && column === 0) content += `${margin.toFixed(2)} ${(margin + 4).toFixed(2)} ${(20*mmToPt).toFixed(2)} ${(20*mmToPt).toFixed(2)} re S\n`;
+      if (relief) {
+        const title = pdfText(`${relief.name || "ReliefLayers"} - ${sheet.title || "Hoehenlinien"}`);
+        const subtitle = pdfText(`${sheet.subtitle || ""} | Material ${relief.thicknessMm || "?"} mm | Blatt ${sheetIndex + 1}/${reliefSheets.length} | Kachel ${column + 1}/${pagesX}, ${row + 1}/${pagesY}`);
+        const legend = pdfText(`Hoehen (mm): ${(sheet.levels || []).map(value => Number(value).toFixed(1)).join(", ")} | ${$("#controlSquare").checked ? "Kontrollmass 20 mm | " : ""}Druck auf 100% pruefen`);
+        content += `BT /F1 8 Tf ${margin.toFixed(2)} ${(pageH - margin * .55).toFixed(2)} Td (${title}) Tj ET\n`;
+        content += `BT /F1 7 Tf ${margin.toFixed(2)} ${(margin * .47).toFixed(2)} Td (${subtitle}) Tj ET\n`;
+        content += `BT /F1 6 Tf ${margin.toFixed(2)} ${(margin * .78).toFixed(2)} Td (${legend}) Tj ET\n`;
+        for (const [index, note] of (sheet.notes || []).entries()) content += `BT /F1 9 Tf ${(margin + 12).toFixed(2)} ${(pageH - margin - 30 - index * 15).toFixed(2)} Td (${pdfText(note)}) Tj ET\n`;
+      }
       pageContents.push(content);
     }
-    const objects = [null, "<< /Type /Catalog /Pages 2 0 R >>", ""];
+    const objects = [null, "<< /Type /Catalog /Pages 2 0 R >>", "", "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>"];
     const kids = [];
     pageContents.forEach((content) => {
       const pageId = objects.length, contentId = pageId + 1; kids.push(`${pageId} 0 R`);
-      objects.push(`<< /Type /Page /Parent 2 0 R /MediaBox [0 0 ${pageW.toFixed(2)} ${pageH.toFixed(2)}] /Contents ${contentId} 0 R /Resources << >> >>`);
+      objects.push(`<< /Type /Page /Parent 2 0 R /MediaBox [0 0 ${pageW.toFixed(2)} ${pageH.toFixed(2)}] /Contents ${contentId} 0 R /Resources << /Font << /F1 3 0 R >> >> >>`);
       objects.push(`<< /Length ${new TextEncoder().encode(content).length} >>\nstream\n${content}endstream`);
     });
     objects[2] = `<< /Type /Pages /Count ${kids.length} /Kids [${kids.join(" ")}] >>`;
@@ -769,5 +782,13 @@
     if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "y") { event.preventDefault(); redo(); }
   });
 
+  window.OutlinesReliefBridge = {
+    getSource: () => state.source && { width: state.source.width, height: state.source.height, data: state.source.data, mask: state.mask, paths: state.paths, hints: state.hints, settings: processingSettings(), widthMm: Number($("#widthMm").value), heightMm: Number($("#heightMm").value) },
+    getMode: () => state.mode,
+    toast,
+    pdf: createPDF,
+    dxf: exportDXF
+  };
+  window.ReliefUI?.init();
   applyPreset("saw-detail"); updateExportSummary();
 })();

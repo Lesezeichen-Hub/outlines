@@ -1,0 +1,70 @@
+<!doctype html><meta charset="utf-8"><title>Relief smoke test</title>
+<p id="status">WAIT</p><iframe id="app" src="index.html" style="width:1200px;height:900px"></iframe>
+<script>
+  const frame = document.querySelector("#app");
+  frame.onload = () => setTimeout(async () => {
+    try {
+      const doc = frame.contentDocument;
+      doc.querySelector("#reliefMode").click();
+      doc.querySelector("#reliefExample").click();
+      if (doc.querySelector("#reliefPanel").hidden) throw Error("Editor nicht geöffnet");
+      if (doc.querySelector("#reliefCanvas").width !== 240) throw Error("Beispiel nicht geladen");
+      if (doc.querySelectorAll(".relief-layer").length !== 4) throw Error("Ebenen fehlen");
+      doc.querySelector("#reliefSuggest").click();
+      if (doc.querySelectorAll(".relief-layer").length !== 4) throw Error("Segmentierung fehlgeschlagen");
+      doc.querySelector("#reliefUndo").click();
+      doc.querySelector('[data-relief-action="expand"]').click();
+      doc.querySelector("#reliefUndo").click();
+      doc.querySelector("#reliefDepthScale").value = "90";
+      doc.querySelector("#reliefApplyScale").click();
+      doc.querySelector("#reliefUndo").click();
+      doc.querySelector('[data-relief-view="3d"]').click();
+      if (doc.querySelector("#relief3d").hidden) throw Error("3D-Vorschau nicht sichtbar");
+      doc.querySelector("#relief3dContours").click();
+      doc.querySelector("#relief3dGrid").click();
+      doc.querySelector("#relief3dSlice").value="80";
+      doc.querySelector("#relief3dSlice").dispatchEvent(new Event("input"));
+      doc.querySelector("#reliefSave").click();
+      await new Promise(resolve => setTimeout(resolve,200));
+      if (!(await frame.contentWindow.ReliefStorage.list()).length) throw Error("Speichern fehlgeschlagen");
+      doc.querySelector("#reliefOpen").click();
+      await new Promise(resolve => setTimeout(resolve,200));
+      if (doc.querySelectorAll(".relief-layer").length !== 4) throw Error("Wiederherstellung fehlgeschlagen");
+      let exportedPdf=null;
+      const originalObjectUrl=frame.contentWindow.URL.createObjectURL;
+      const originalAnchorClick=frame.contentWindow.HTMLAnchorElement.prototype.click;
+      frame.contentWindow.URL.createObjectURL=blob=>{if(blob.type==="application/pdf")exportedPdf=blob;return originalObjectUrl.call(frame.contentWindow.URL,blob);};
+      frame.contentWindow.HTMLAnchorElement.prototype.click=function(){};
+      doc.querySelector('[data-relief-export="pdf"]').click();
+      frame.contentWindow.URL.createObjectURL=originalObjectUrl;
+      frame.contentWindow.HTMLAnchorElement.prototype.click=originalAnchorClick;
+      if (!exportedPdf || exportedPdf.size < 1000) throw Error("PDF-Druckassistent fehlgeschlagen");
+      if (new URLSearchParams(location.search).has("example-only")) { document.querySelector("#status").textContent="PASS"; return; }
+      const sourceCanvas = doc.createElement("canvas"); sourceCanvas.width = 64; sourceCanvas.height = 64;
+      const ctx = sourceCanvas.getContext("2d"); ctx.fillStyle = "white"; ctx.fillRect(0,0,64,64); ctx.fillStyle = "black"; ctx.fillRect(12,12,40,40);
+      const blob = await new Promise(resolve => sourceCanvas.toBlob(resolve,"image/png"));
+      const transfer = new DataTransfer(); transfer.items.add(new File([blob],"test.png",{type:"image/png"}));
+      const input = doc.querySelector("#fileInput"); input.files = transfer.files; input.dispatchEvent(new Event("change",{bubbles:true}));
+      await new Promise(resolve => setTimeout(resolve,5000));
+      if (doc.querySelector("#originalCanvas").width !== 64) throw Error("Bildimport fehlgeschlagen: " + doc.querySelector("#originalCanvas").width + " / " + doc.querySelector("#processState").textContent);
+      doc.querySelector("#reliefTakeSource").click();
+      if (doc.querySelectorAll(".relief-layer").length !== 1) throw Error("Motivübernahme fehlgeschlagen");
+      const geometry = { paths: [[[0,0],[32,32]]], width: 64, height: 64, widthMm: 160, heightMm: 160 };
+      const pdf = frame.contentWindow.OutlinesReliefBridge.pdf(geometry);
+      if (!(await pdf.text()).startsWith("%PDF-1.4")) throw Error("PDF-Export fehlgeschlagen");
+      const multi = await frame.contentWindow.OutlinesReliefBridge.pdf({ ...geometry, name: "Test", thicknessMm: 20, sheets: [{ title: "Gesamt", paths: geometry.paths }, { title: "Ebene 1", paths: geometry.paths }] }).text();
+      if (!multi.includes("/Count 2") || !multi.includes("/F1 8 Tf")) throw Error("Ebenen-PDF fehlt");
+      const xrefOffset = Number(multi.match(/startxref\n(\d+)/)?.[1]);
+      if (multi.slice(xrefOffset,xrefOffset+4) !== "xref") throw Error("PDF-Querverweis ungültig");
+      const entries = multi.slice(xrefOffset).match(/\n(\d{10}) 00000 n/g) || [];
+      for (let index=0;index<entries.length;index++) {
+        const offset=Number(entries[index].match(/\d{10}/)[0]);
+        if (!multi.startsWith(`${index+1} 0 obj`,offset)) throw Error("PDF-Objektversatz ungültig");
+      }
+      const dxf = frame.contentWindow.OutlinesReliefBridge.dxf(geometry);
+      if (!(await dxf.text()).includes("$INSUNITS")) throw Error("DXF-Einheit fehlt");
+      if (!(await frame.contentWindow.OutlinesReliefBridge.dxf({...geometry,mirrored:true}).text()).includes("160.0000")) throw Error("DXF-Spiegelung fehlt");
+      document.querySelector("#status").textContent = "PASS";
+    } catch (e) { document.querySelector("#status").textContent = "FAIL " + e.message; }
+  }, 100);
+</script>
