@@ -95,6 +95,7 @@
       state.history = []; state.future = []; state.paths = []; state.mask = null;
       resetSourceEdits();
       $("#widthMm").value = 120; updateLockedHeight();
+      window.ReliefUI?.sourceImported();
       $("#fileMeta").textContent = `${file.name} · ${naturalWidth} × ${naturalHeight} px · ${formatBytes(file.size)}${scale < 1 ? " · Arbeitsvorschau verkleinert" : ""}`;
       $("#originalSize").textContent = `${sourceCanvas.width} × ${sourceCanvas.height} px`;
       $("#emptyState").hidden = true; $("#editor").hidden = false;
@@ -170,7 +171,7 @@
     if (state.worker) return state.worker;
     if (state.workerDisabled || !("Worker" in window)) return null;
     try {
-      state.worker = new Worker(new URL("worker.js?v=1.4.0", window.location.href));
+      state.worker = new Worker(new URL("worker.js?v=1.4.1", window.location.href));
     } catch (error) {
       state.workerDisabled = true;
       console.warn("Outlines: Web Worker nicht verfügbar, Verarbeitung im Hauptfenster.", error);
@@ -705,7 +706,7 @@
     $("#hatching").disabled = state.mode !== "lineart";
     $("#lineWidth").disabled = ["silhouette", "stencil"].includes(state.mode);
     $("#removeBackground").disabled = ["silhouette", "stencil"].includes(state.mode);
-    $("#detail").disabled = $("#detection").value !== "color" && !(state.mode === "lineart" && $("#hatching").checked);
+    $("#detail").disabled = $("#reliefPanel").hidden && $("#detection").value !== "color" && !(state.mode === "lineart" && $("#hatching").checked);
     $("#strokeMm").disabled = $("#outputStyle").value !== "cutline";
     $$('[data-mode]').forEach(button => { button.setAttribute("role", "radio"); button.setAttribute("aria-checked", String(button.dataset.mode === state.mode)); });
   }
@@ -783,7 +784,7 @@
   });
 
   window.OutlinesReliefBridge = {
-    getSource: () => state.source && { width: state.source.width, height: state.source.height, data: state.source.data, mask: state.mask, paths: state.paths, hints: state.hints, settings: processingSettings(), widthMm: Number($("#widthMm").value), heightMm: Number($("#heightMm").value) },
+    getSource: () => state.source && { width: state.source.width, height: state.source.height, data: state.source.data, mask: state.mask, paths: state.paths, hints: state.hints, settings: processingSettings(), widthMm: Number($("#widthMm").value), heightMm: Number($("#heightMm").value), fileName: state.file?.name },
     getMode: () => state.mode,
     toast,
     pdf: createPDF,

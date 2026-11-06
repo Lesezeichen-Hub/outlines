@@ -219,6 +219,10 @@ console.log("Outlines core: 14 Testgruppen erfolgreich.");
   const pixels = new Uint8ClampedArray(4*4*4); for(let i=0;i<16;i++) pixels.set(i<8?[20,20,20,255]:[230,230,230,255],i*4);
   const proposed = Relief.suggest(4,4,pixels,"brightness",2);
   assert.equal(proposed.length,2); assert.equal(proposed[0][0],1); assert.equal(proposed[1][15],1);
+  const narrowTones=new Uint8ClampedArray(4*4*4);
+  for(let i=0;i<16;i++){const tone=80+(i%4)*5;narrowTones.set([tone,tone,tone,255],i*4);}
+  const narrowLayers=Relief.suggest(4,4,narrowTones,"brightness",4);
+  assert.ok(narrowLayers.filter(mask=>mask.some(Boolean)).length>=3,"Enger Helligkeitsbereich muss mehrere Ebenen ergeben");
   assert.equal(Relief.suggest(4,4,pixels,"color",2).length,2);
   assert.equal(Relief.suggest(4,4,pixels,"edges",2,50,new Uint8Array(16).fill(1)).length,2);
   const report = Relief.analyze(Relief.compose(restored), restored, 15, 30);

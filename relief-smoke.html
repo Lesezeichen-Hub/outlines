@@ -11,7 +11,9 @@
       if (doc.querySelector("#reliefCanvas").width !== 240) throw Error("Beispiel nicht geladen");
       if (doc.querySelectorAll(".relief-layer").length !== 4) throw Error("Ebenen fehlen");
       doc.querySelector("#reliefSuggest").click();
-      if (doc.querySelectorAll(".relief-layer").length !== 4) throw Error("Segmentierung fehlgeschlagen");
+      const suggestedCount=doc.querySelectorAll(".relief-layer").length;
+      if (suggestedCount < 2 || suggestedCount > 4) throw Error("Segmentierung fehlgeschlagen");
+      if (![...doc.querySelectorAll(".relief-layer-height")].every(input=>Number(input.value)>0)) throw Error("Vorschläge haben keine Reliefhöhe");
       doc.querySelector("#reliefUndo").click();
       doc.querySelector('[data-relief-action="expand"]').click();
       doc.querySelector("#reliefUndo").click();
@@ -41,14 +43,20 @@
       if (!exportedPdf || exportedPdf.size < 1000) throw Error("PDF-Druckassistent fehlgeschlagen");
       if (new URLSearchParams(location.search).has("example-only")) { document.querySelector("#status").textContent="PASS"; return; }
       const sourceCanvas = doc.createElement("canvas"); sourceCanvas.width = 64; sourceCanvas.height = 64;
-      const ctx = sourceCanvas.getContext("2d"); ctx.fillStyle = "white"; ctx.fillRect(0,0,64,64); ctx.fillStyle = "black"; ctx.fillRect(12,12,40,40);
+      const ctx = sourceCanvas.getContext("2d"); ctx.fillStyle = "white"; ctx.fillRect(0,0,64,64);
+      for(let x=12;x<52;x++){const tone=20+Math.floor((x-12)/5)*9;ctx.fillStyle=`rgb(${tone},${tone},${tone})`;ctx.fillRect(x,12,1,40);}
       const blob = await new Promise(resolve => sourceCanvas.toBlob(resolve,"image/png"));
       const transfer = new DataTransfer(); transfer.items.add(new File([blob],"test.png",{type:"image/png"}));
       const input = doc.querySelector("#fileInput"); input.files = transfer.files; input.dispatchEvent(new Event("change",{bubbles:true}));
       await new Promise(resolve => setTimeout(resolve,5000));
       if (doc.querySelector("#originalCanvas").width !== 64) throw Error("Bildimport fehlgeschlagen: " + doc.querySelector("#originalCanvas").width + " / " + doc.querySelector("#processState").textContent);
       doc.querySelector("#reliefTakeSource").click();
-      if (doc.querySelectorAll(".relief-layer").length !== 1) throw Error("Motivübernahme fehlgeschlagen");
+      if (doc.querySelectorAll(".relief-layer").length < 2) throw Error("Motivübernahme hat keine abgestuften Ebenen erzeugt");
+      const detail=doc.querySelector("#detail");
+      detail.value="0";detail.dispatchEvent(new Event("input",{bubbles:true}));detail.dispatchEvent(new Event("change",{bubbles:true}));
+      const simpleCount=doc.querySelectorAll(".relief-layer").length;
+      detail.value="100";detail.dispatchEvent(new Event("input",{bubbles:true}));detail.dispatchEvent(new Event("change",{bubbles:true}));
+      if(doc.querySelectorAll(".relief-layer").length<=simpleCount) throw Error(`Detailtiefe verändert Reliefebenen nicht (${simpleCount} zu ${doc.querySelectorAll(".relief-layer").length}; ${doc.querySelector("#processState").textContent})`);
       const geometry = { paths: [[[0,0],[32,32]]], width: 64, height: 64, widthMm: 160, heightMm: 160 };
       const pdf = frame.contentWindow.OutlinesReliefBridge.pdf(geometry);
       if (!(await pdf.text()).startsWith("%PDF-1.4")) throw Error("PDF-Export fehlgeschlagen");

@@ -139,8 +139,11 @@
       }
       for(let i=0;i<n;i++)if(eligible(i))masks[group[i]][i]=1;
     }else{
-      const shift=(sensitivity-50)/100;
-      for(let i=0;i<n;i++)if(eligible(i)){const lum=.2126*rgba[i*4]+.7152*rgba[i*4+1]+.0722*rgba[i*4+2],j=clamp(Math.floor((lum/256+shift)*k),0,k-1);masks[j][i]=1;}
+      let low=255,high=0;
+      const luminance=i=>.2126*rgba[i*4]+.7152*rgba[i*4+1]+.0722*rgba[i*4+2];
+      for(let i=0;i<n;i++)if(eligible(i)){const lum=luminance(i);low=Math.min(low,lum);high=Math.max(high,lum);}
+      const span=Math.max(1,high-low),shift=(sensitivity-50)/500;
+      for(let i=0;i<n;i++)if(eligible(i)){const j=clamp(Math.floor(((luminance(i)-low)/span+shift)*k),0,k-1);masks[j][i]=1;}
     }
     return masks;
   }

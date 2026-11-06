@@ -52,7 +52,7 @@ Der Browser-Smoke-Test liegt in `relief-smoke.html`. Über einen lokalen Webserv
 
 ### ReliefLayers
 
-Im Bereich „Werkart“ ReliefLayers wählen. Bereits geladene Motive werden als Silhouettenmaske in einen Reliefentwurf übernommen. Ohne Bild lässt sich im Reliefbereich das Beispiel „Leuchtturm im Strudel“ laden. Die 3D-Ansicht nutzt dieselbe Höhenkarte wie Höhenlinien und Querschnitte. Eine Fotografie enthält keine verlässlichen Tiefeninformationen; die Höhen sind manuell festzulegen.
+Im Bereich „Werkart“ ReliefLayers wählen. Bereits geladene Motive werden in Helligkeitsbereiche mit abgestuften Vorschlagshöhen aufgeteilt. Der Regler „Detailtiefe“ bestimmt die Anzahl der vorgeschlagenen Bereiche; wenn ein Bild kaum unterschiedliche Helligkeiten enthält, können es weniger Ebenen sein. Nach manuellen Änderungen bleiben die Ebenen beim Nachberechnen erhalten. Mit „Aktuelles Motiv übernehmen“ lassen sich neue Vorschläge erzeugen. Ohne Bild lässt sich im Reliefbereich das Beispiel „Leuchtturm im Strudel“ laden. Die 3D-Ansicht nutzt dieselbe Höhenkarte wie Höhenlinien und Querschnitte. Eine Fotografie enthält keine verlässlichen Tiefeninformationen; die vorgeschlagenen Höhen müssen für das Werkstück geprüft und angepasst werden.
 
 Die Reliefbearbeitung nutzt eine auf höchstens 320 Pixel Kantenlänge reduzierte Arbeitsauflösung. Das exportierte STL ist ein geschlossenes, auf höchstens 140 Rasterpunkte je Kantenlänge vereinfachtes Modell; STL speichert selbst keine Einheit, die Koordinaten sind Millimeter. Das PNG der Höhenkarte hat 8 Bit je Kanal; für genaue Werte die JSON-Höhenmatrix verwenden. Die lokalen Projekte liegen in IndexedDB des aktuellen Ursprungs. Der Export als `.relief.json` ist die portable Sicherung.
 

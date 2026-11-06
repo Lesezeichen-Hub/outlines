@@ -1,6 +1,6 @@
 "use strict";
 
-importScripts("outlines-core.js?v=1.4.0");
+importScripts("outlines-core.js?v=1.4.1");
 
 self.onmessage = (event) => {
   const { id, payload } = event.data || {};
