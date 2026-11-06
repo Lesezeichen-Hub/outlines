@@ -171,7 +171,7 @@
     if (state.worker) return state.worker;
     if (state.workerDisabled || !("Worker" in window)) return null;
     try {
-      state.worker = new Worker(new URL("worker.js?v=1.4.1", window.location.href));
+      state.worker = new Worker(new URL("worker.js?v=1.4.2", window.location.href));
     } catch (error) {
       state.workerDisabled = true;
       console.warn("Outlines: Web Worker nicht verfügbar, Verarbeitung im Hauptfenster.", error);

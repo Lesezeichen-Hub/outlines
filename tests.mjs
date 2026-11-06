@@ -223,6 +223,13 @@ console.log("Outlines core: 14 Testgruppen erfolgreich.");
   for(let i=0;i<16;i++){const tone=80+(i%4)*5;narrowTones.set([tone,tone,tone,255],i*4);}
   const narrowLayers=Relief.suggest(4,4,narrowTones,"brightness",4);
   assert.ok(narrowLayers.filter(mask=>mask.some(Boolean)).length>=3,"Enger Helligkeitsbereich muss mehrere Ebenen ergeben");
+  const regionPixels=new Uint8ClampedArray(12*8*4),regionSubject=new Uint8Array(12*8).fill(1);
+  for(let y=0;y<8;y++)for(let x=0;x<12;x++){const tone=55+Math.floor(x/3)*10;regionPixels.set([tone,tone,tone,255],(y*12+x)*4);}
+  const regionCount=(method,count,sensitivity)=>Relief.suggest(12,8,regionPixels,method,count,sensitivity,regionSubject).filter(mask=>mask.some(Boolean)).length;
+  assert.ok(regionCount("components",4,100)>regionCount("components",4,0),"Empfindlichkeit muss zusammenhängende Flächen verändern");
+  assert.ok(regionCount("components",4,100)>regionCount("components",2,100),"Anzahl muss zusammenhängende Flächen verändern");
+  assert.ok(regionCount("color",4,100)>regionCount("color",4,0),"Empfindlichkeit muss Farbähnlichkeit verändern");
+  assert.ok(regionCount("brightness",4,100)>regionCount("brightness",4,0),"Empfindlichkeit muss Helligkeitsbereiche verändern");
   assert.equal(Relief.suggest(4,4,pixels,"color",2).length,2);
   assert.equal(Relief.suggest(4,4,pixels,"edges",2,50,new Uint8Array(16).fill(1)).length,2);
   const report = Relief.analyze(Relief.compose(restored), restored, 15, 30);

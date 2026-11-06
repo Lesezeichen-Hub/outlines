@@ -1,7 +1,7 @@
 (function(root){
   "use strict";
   const R=root.ReliefCore,$=s=>document.querySelector(s),$$=s=>[...document.querySelectorAll(s)];
-  let p=null,map=null,selected=0,view="height",preview=null,image=null,history=[],future=[],painting=false,cutStart=null,autoSource=false,pendingSource=false;
+  let p=null,map=null,selected=0,view="height",preview=null,image=null,suggestSubject=null,history=[],future=[],painting=false,cutStart=null,autoSource=false,pendingSource=false;
   const canvas=()=>$("#reliefCanvas"),message=(m,bad=false)=>root.OutlinesReliefBridge.toast(m,bad),esc=s=>String(s).replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&#39;"}[c]));
   const effectiveStep=()=>Math.max(.1,Number($("#reliefStep").value)||1,(p?.settings.reliefMm||0)/200);
   function snapshot(){if(!p)return;autoSource=false;pendingSource=false;history.push(R.serialize(p));if(history.length>20)history.shift();future=[];buttons();}
@@ -29,7 +29,7 @@
       p=R.project(d.w,d.h,{widthMm:s.widthMm,heightMm:s.heightMm});
       p.name="Relief aus "+(s.fileName||"Motiv");
       p.layers=proposed.map((mask,i)=>R.layer(`Helligkeitsbereich ${i+1}`,+(p.settings.reliefMm*(i+1)/(proposed.length+1)).toFixed(2),mask,["#6f8794","#a68470","#d9a654","#b77889","#84a47a","#c1a28b","#7b8eac","#bb9981"][i]));
-      image=d.rgba;selected=0;history=[];future=[];autoSource=true;pendingSource=false;sync();refresh();
+      image=d.rgba;suggestSubject=subject;selected=0;history=[];future=[];autoSource=true;pendingSource=false;sync();refresh();
       message(proposed.length===1?"Das Motiv enthält nur einen erkennbaren Helligkeitsbereich. Für weitere Ebenen Masken vorschlagen oder bearbeiten.":`${proposed.length} Reliefebenen aus dem Motiv erzeugt.`);
     }catch(e){message("Relief konnte nicht erzeugt werden: "+e.message,true);}
   }
@@ -45,8 +45,8 @@
   function sectionView(cut){const host=$("#reliefSection"),w=480,h=140,max=p.settings.reliefMm,pts=cut.points.map(q=>`${q.mm/cut.lengthMm*w},${h-q.z/max*(h-15)}`).join(" ");host.innerHTML=`<h3>${esc(cut.name)} · ${cut.lengthMm.toFixed(1)} mm</h3><svg viewBox="0 0 ${w} ${h}" role="img" aria-label="Höhenprofil"><polyline points="${pts}" fill="none" stroke="#d9a654" stroke-width="2"/></svg><p>Min ${cut.min.toFixed(1)} mm · Max ${cut.max.toFixed(1)} mm · Reststärke mindestens ${(p.settings.thicknessMm-p.settings.reliefMm+cut.min).toFixed(1)} mm</p><button id="reliefCutExport">Schnitt als SVG</button>`;$("#reliefCutExport").onclick=()=>download(new Blob([`<svg xmlns="http://www.w3.org/2000/svg" width="${cut.lengthMm}mm" height="${max}mm" viewBox="0 0 ${w} ${h}"><polyline points="${pts}" fill="none" stroke="black" stroke-width="1"/></svg>`],{type:"image/svg+xml"}),"schnitt.svg");}
   function download(blob,name){const url=URL.createObjectURL(blob),a=document.createElement("a");a.href=url;a.download=name;a.click();setTimeout(()=>URL.revokeObjectURL(url),30000);}
   function exportFile(type){if(!p)return;const name=(p.name||"relief").replace(/[^a-z0-9_-]/gi,"-");if(type==="svg")download(new Blob([R.svg(p,map,effectiveStep(),$("#reliefSvgScope").value,$("#reliefMirror").checked)],{type:"image/svg+xml"}),name+".svg");else if(type==="height")download(new Blob([JSON.stringify({unit:"mm",width:p.width,height:p.height,widthMm:p.settings.widthMm,heightMm:p.settings.heightMm,values:Array.from(map.values)})],{type:"application/json"}),name+"-height.json");else if(type==="stl")download(new Blob([R.stl(map,p)],{type:"model/stl"}),name+".stl");else if(type==="png"){const temp=document.createElement("canvas");temp.width=p.width;temp.height=p.height;const ctx=temp.getContext("2d"),data=ctx.createImageData(p.width,p.height);for(let i=0;i<map.values.length;i++){const v=Math.round(map.values[i]/p.settings.reliefMm*255);data.data.set([v,v,v,255],i*4);}ctx.putImageData(data,0,0);temp.toBlob(b=>b&&download(b,name+"-height.png"));}}
-  function packageProject(){return JSON.stringify({format:"outlines-relief",schema:1,project:JSON.parse(R.serialize(p)),image:image?Array.from(image):null});}
-  function loadPackage(raw){const data=typeof raw==="string"?JSON.parse(raw):raw;if(data.format!=="outlines-relief")throw Error("Unbekanntes Projektformat.");p=R.deserialize(data.project);autoSource=false;pendingSource=false;image=data.image?Uint8ClampedArray.from(data.image):null;selected=0;history=[];future=[];sync();refresh();$("#reliefPanel").hidden=false;}
+  function packageProject(){return JSON.stringify({format:"outlines-relief",schema:1,project:JSON.parse(R.serialize(p)),image:image?Array.from(image):null,subject:suggestSubject?Array.from(suggestSubject):null});}
+  function loadPackage(raw){const data=typeof raw==="string"?JSON.parse(raw):raw;if(data.format!=="outlines-relief")throw Error("Unbekanntes Projektformat.");p=R.deserialize(data.project);autoSource=false;pendingSource=false;image=data.image?Uint8ClampedArray.from(data.image):null;suggestSubject=data.subject?.length===p.width*p.height?Uint8Array.from(data.subject):null;selected=0;history=[];future=[];sync();refresh();$("#reliefPanel").hidden=false;}
   function init(){preview=root.ReliefPreview.create($("#relief3d"));$("#reliefExample").onclick=example;$("#reliefUndo").onclick=undo;$("#reliefRedo").onclick=redo;buttons();$$('[data-relief-action]').forEach(b=>b.onclick=()=>action(b.dataset.reliefAction));$$('[data-relief-view]').forEach(b=>b.onclick=()=>{view=b.dataset.reliefView;canvas().hidden=view==="3d";$("#relief3d").hidden=view!=="3d";$$('[data-relief-view]').forEach(x=>x.classList.toggle("active",x===b));renderCanvas();preview.draw();});$$('[data-relief-camera]').forEach(b=>b.onclick=()=>preview.view(b.dataset.reliefCamera));$("#reliefMaterial").onchange=e=>preview.material(e.target.value);$("#reliefLight").oninput=e=>preview.light(e.target.value);$("#reliefStep").onchange=renderCanvas;for(const [id,key] of [["reliefWidth","widthMm"],["reliefHeight","heightMm"],["reliefThickness","thicknessMm"],["reliefMax","reliefMm"],["reliefFit","fit"],["reliefOverlap","overlap"],["reliefStyle","style"]])$("#"+id).onchange=e=>{if(!p)return;snapshot();p.settings[key]=["fit","overlap","style"].includes(key)?e.target.value:+e.target.value;try{R.validate(p);refresh();}catch(err){undo();message(err.message,true);}};$("#reliefName").onchange=e=>{if(p){snapshot();p.name=e.target.value;}};$("#reliefRadius").oninput=e=>{$("#reliefRadiusValue").textContent=`${e.target.value} px · ${(+e.target.value*p.settings.widthMm/p.width).toFixed(1)} mm`;};canvas().addEventListener("pointerdown",e=>{if(!p)return;canvas().setPointerCapture(e.pointerId);if($("#reliefTool").value==="cut"){cutStart=point(e);return;}snapshot();painting=true;stroke(e);});canvas().addEventListener("pointermove",e=>{if(painting)stroke(e);});canvas().addEventListener("pointerup",e=>{if(cutStart){snapshot();const cut=R.section(map,p,cutStart,point(e),`Schnitt ${p.cuts.length+1}`);p.cuts.push(cut);renderCuts();sectionView(cut);cutStart=null;renderCanvas();}painting=false;preview?.update(map,p.settings);renderPlan();});canvas().addEventListener("pointercancel",()=>{painting=false;cutStart=null;});$("#reliefProjectExport").onclick=()=>p&&download(new Blob([packageProject()],{type:"application/json"}),(p.name||"relief")+".relief.json");$("#reliefProjectImport").onclick=()=>$("#reliefImportInput").click();$("#reliefImportInput").onchange=async e=>{try{const f=e.target.files[0];if(!f||f.size>25e6)throw Error("Projektdatei fehlt oder ist zu groß.");loadPackage(await f.text());}catch(err){message(err.message,true);}};$$('[data-relief-export]').forEach(b=>b.onclick=()=>exportFile(b.dataset.reliefExport));}
   function lineExport(){const paths=[],step=effectiveStep();for(let z=step;z<=p.settings.reliefMm+.0001;z+=step)paths.push(...R.contours(map,z));return{paths,width:p.width,height:p.height,widthMm:p.settings.widthMm,heightMm:p.settings.heightMm,mirrored:$("#reliefMirror").checked};}
   function printPDF(){
@@ -110,10 +110,25 @@
     $("#reliefStep").onchange=adjustStep;$("#reliefMax").addEventListener("change",adjustStep);
   }
   const baseInit=init;
+  function proposeMasks(){
+    if(!p||!image)return;
+    const method=$("#reliefSuggestMethod").value,count=+$("#reliefSuggestCount").value,sensitivity=+$("#reliefSuggestSensitivity").value;
+    const subject=suggestSubject?.length===p.width*p.height?new Uint8Array(suggestSubject):new Uint8Array(p.width*p.height);
+    if(!suggestSubject||suggestSubject.length!==subject.length)for(const layer of p.layers)for(let i=0;i<subject.length;i++)if(layer.mask[i])subject[i]=1;
+    const masks=R.suggest(p.width,p.height,image,method,count,sensitivity,subject).filter(mask=>mask.some(Boolean));
+    if(!masks.length){message("Keine Bereiche erkannt. Andere Methode oder Empfindlichkeit wählen.",true);return;}
+    snapshot();suggestSubject=subject;
+    p.layers=masks.map((mask,i)=>R.layer(`Vorschlag ${i+1}`,+(p.settings.reliefMm*(i+1)/(masks.length+1)).toFixed(2),mask,["#6f8794","#a68470","#d9a654","#b77889","#84a47a","#c1a28b","#7b8eac","#bb9981"][i]));
+    selected=0;refresh();message(`${masks.length} Bereiche mit abgestuften Höhen vorgeschlagen.`);
+  }
   root.ReliefUI={init(){baseInit();setupStorage();setupTools();setupSelection();setupPreviewOptions();$("#reliefLayers").textContent="Bild laden oder Beispiel wählen.";$("#reliefMode").onclick=()=>{$("#editor").hidden=false;$("#emptyState").hidden=true;$("#reliefPanel").hidden=false;if((!p||pendingSource)&&root.OutlinesReliefBridge.getSource())fromSource();$("#reliefPanel").scrollIntoView({behavior:"smooth"});};$("#reliefClose").onclick=()=>{$("#reliefPanel").hidden=true;if(!root.OutlinesReliefBridge.getSource()){$("#editor").hidden=true;$("#emptyState").hidden=false;}};$("[data-relief-export=pdf]").onclick=printPDF;$("[data-relief-export=dxf]").onclick=()=>p&&download(root.OutlinesReliefBridge.dxf(lineExport()),"relief-konturen.dxf");},sourceImported(){pendingSource=true;if(!$("#reliefPanel").hidden)fromSource();},sourceChanged(){if(!$("#reliefPanel").hidden&&(!p||autoSource||pendingSource))fromSource();}};
   $("#detail").addEventListener("change",()=>{if(autoSource&&!$("#reliefPanel").hidden)fromSource();});
+  for(const id of ["reliefSuggestMethod","reliefSuggestCount","reliefSuggestSensitivity"])$("#"+id).addEventListener("change",proposeMasks);
+  const sensitivityInput=$("#reliefSuggestSensitivity"),sensitivityValue=document.createElement("output");
+  sensitivityValue.textContent=` ${sensitivityInput.value}`;sensitivityInput.before(sensitivityValue);
+  sensitivityInput.addEventListener("input",()=>{sensitivityValue.textContent=` ${sensitivityInput.value}`;});
   document.addEventListener("click",e=>{
-    if(e.target.closest("#reliefExample, #reliefNew")){autoSource=false;pendingSource=false;}
+    if(e.target.closest("#reliefExample, #reliefNew")){autoSource=false;pendingSource=false;suggestSubject=null;}
     if(e.target.closest("#reliefMode")){$("#reliefMode").classList.add("active");$("#reliefMode").setAttribute("aria-checked","true");$("#detail").disabled=false;$$('[data-mode]').forEach(b=>{b.classList.remove("active");b.setAttribute("aria-checked","false");});}
     if(e.target.closest("#reliefClose")){ $("#reliefMode").classList.remove("active");$("#reliefMode").setAttribute("aria-checked","false");const modeButton=$(`[data-mode="${root.OutlinesReliefBridge.getMode()}"]`);modeButton?.classList.add("active");modeButton?.setAttribute("aria-checked","true"); }
     if(e.target.closest("[data-mode]")){ $("#reliefPanel").hidden=true;$("#reliefMode").classList.remove("active");$("#reliefMode").setAttribute("aria-checked","false");$("#detail").disabled=$("#detection").value!=="color"&&!(root.OutlinesReliefBridge.getMode()==="lineart"&&$("#hatching").checked);if(!root.OutlinesReliefBridge.getSource()){$("#editor").hidden=true;$("#emptyState").hidden=false;} }
@@ -121,14 +136,6 @@
     if(e.target.id==="reliefApplyScale"&&p){const factor=Number($("#reliefDepthScale").value)/100;if(!Number.isFinite(factor)||factor<=0)return;snapshot();for(const layer of p.layers)layer.height=R.clamp(layer.height*factor,0,p.settings.reliefMm);for(let i=0;i<p.edits.length;i++)p.edits[i]*=factor;refresh();}
     if(e.target.dataset.reliefExport==="view-png"&&p)canvas().toBlob(blob=>blob&&download(blob,"relief-ansicht.png"));
     if(e.target.dataset.reliefExport==="preview-png"&&p){preview.draw();$("#relief3d").toBlob(blob=>blob&&download(blob,"relief-3d.png"));}
-    if(e.target.id==="reliefSuggest"&&p&&image){
-      snapshot();
-      const method=$("#reliefSuggestMethod").value, count=+$("#reliefSuggestCount").value, sensitivity=+$("#reliefSuggestSensitivity").value;
-      const subject=new Uint8Array(p.width*p.height);for(const l of p.layers)for(let i=0;i<subject.length;i++)if(l.mask[i])subject[i]=1;
-      const masks=R.suggest(p.width,p.height,image,method,count,sensitivity,subject).filter(mask=>mask.some(Boolean));
-      if(!masks.length){message("Keine Bereiche erkannt. Andere Methode oder Empfindlichkeit wählen.",true);return;}
-      p.layers=masks.map((mask,i)=>R.layer(`Vorschlag ${i+1}`,+(p.settings.reliefMm*(i+1)/(masks.length+1)).toFixed(2),mask,["#6f8794","#a68470","#d9a654","#b77889","#84a47a","#c1a28b","#7b8eac","#bb9981"][i]));
-      selected=0;refresh();message(`${masks.length} Bereiche mit abgestuften Höhen vorgeschlagen.`);
-    }
+    if(e.target.id==="reliefSuggest")proposeMasks();
   });
 })(typeof self!=="undefined"?self:globalThis);

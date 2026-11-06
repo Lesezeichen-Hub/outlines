@@ -57,6 +57,17 @@
       const simpleCount=doc.querySelectorAll(".relief-layer").length;
       detail.value="100";detail.dispatchEvent(new Event("input",{bubbles:true}));detail.dispatchEvent(new Event("change",{bubbles:true}));
       if(doc.querySelectorAll(".relief-layer").length<=simpleCount) throw Error(`Detailtiefe verändert Reliefebenen nicht (${simpleCount} zu ${doc.querySelectorAll(".relief-layer").length}; ${doc.querySelector("#processState").textContent})`);
+      const method=doc.querySelector("#reliefSuggestMethod"),sensitivity=doc.querySelector("#reliefSuggestSensitivity");
+      method.value="components";method.dispatchEvent(new Event("change",{bubbles:true}));
+      sensitivity.value="0";sensitivity.dispatchEvent(new Event("change",{bubbles:true}));
+      const coarseCount=doc.querySelectorAll(".relief-layer").length;
+      sensitivity.value="100";sensitivity.dispatchEvent(new Event("change",{bubbles:true}));
+      if(doc.querySelectorAll(".relief-layer").length<=coarseCount) throw Error("Empfindlichkeit verändert zusammenhängende Flächen nicht");
+      method.value="color";method.dispatchEvent(new Event("change",{bubbles:true}));
+      sensitivity.value="0";sensitivity.dispatchEvent(new Event("change",{bubbles:true}));
+      const coarseColors=doc.querySelectorAll(".relief-layer").length;
+      sensitivity.value="100";sensitivity.dispatchEvent(new Event("change",{bubbles:true}));
+      if(doc.querySelectorAll(".relief-layer").length<=coarseColors) throw Error("Empfindlichkeit verändert Farbähnlichkeit nicht");
       const geometry = { paths: [[[0,0],[32,32]]], width: 64, height: 64, widthMm: 160, heightMm: 160 };
       const pdf = frame.contentWindow.OutlinesReliefBridge.pdf(geometry);
       if (!(await pdf.text()).startsWith("%PDF-1.4")) throw Error("PDF-Export fehlgeschlagen");

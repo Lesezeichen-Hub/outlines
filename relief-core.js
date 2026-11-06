@@ -121,7 +121,34 @@
     const n=width*height,k=clamp(Math.round(count),2,8),masks=Array.from({length:k},()=>new Uint8Array(n));
     if(rgba.length!==n*4)throw Error("Bilddaten passen nicht zur Reliefauflösung.");
     const eligible=i=>rgba[i*4+3]>=16&&(!subject||subject[i]);
-    if(method==="components"||method==="edges"){
+    if(method==="components"){
+      const step=Math.max(12,Math.round(100-clamp(sensitivity,0,100)*.88));
+      const keys=new Int32Array(n).fill(-1),seen=new Uint8Array(n),groups=[];
+      for(let i=0;i<n;i++)if(eligible(i)){
+        const offset=i*4,r=Math.floor(rgba[offset]/step),g=Math.floor(rgba[offset+1]/step),b=Math.floor(rgba[offset+2]/step);
+        keys[i]=(r<<12)|(g<<6)|b;
+      }
+      for(let start=0;start<n;start++)if(keys[start]>=0&&!seen[start]){
+        const pixels=[start];seen[start]=1;
+        for(let at=0;at<pixels.length;at++){
+          const i=pixels[at],x=i%width,y=(i/width)|0,key=keys[i];
+          for(const next of [x?i-1:-1,x+1<width?i+1:-1,y?i-width:-1,y+1<height?i+width:-1])
+            if(next>=0&&!seen[next]&&keys[next]===key){seen[next]=1;pixels.push(next);}
+        }
+        groups.push(pixels);
+      }
+      groups.sort((a,b)=>b.length-a.length);
+      const owners=new Int16Array(n).fill(-1),queue=[];
+      groups.slice(0,k).forEach((pixels,j)=>{for(const i of pixels){owners[i]=j;queue.push(i);}});
+      for(let at=0;at<queue.length;at++){
+        const i=queue[at],x=i%width,y=(i/width)|0;
+        for(const next of [x?i-1:-1,x+1<width?i+1:-1,y?i-width:-1,y+1<height?i+width:-1])
+          if(next>=0&&keys[next]>=0&&owners[next]<0){owners[next]=owners[i];queue.push(next);}
+      }
+      for(let i=0;i<n;i++)if(owners[i]>=0)masks[owners[i]][i]=1;
+      return masks;
+    }
+    if(method==="edges"){
       const candidate=new Uint8Array(n),gray=new Uint8Array(n);
       for(let i=0;i<n;i++)gray[i]=Math.round(.2126*rgba[i*4]+.7152*rgba[i*4+1]+.0722*rgba[i*4+2]);
       const edges=method==="edges"?C.sobelEdges(gray,width,height,clamp(60-sensitivity*.4,8,60),clamp(90-sensitivity*.4,20,90)):null;
@@ -130,20 +157,41 @@
       return masks;
     }
     if(method==="color"){
-      const centers=Array.from({length:k},(_,j)=>{const i=Math.floor((j+.5)*n/k);return[rgba[i*4],rgba[i*4+1],rgba[i*4+2]];});
+      const eligiblePixels=[];for(let i=0;i<n;i++)if(eligible(i))eligiblePixels.push(i);
+      const centers=[];
+      if(eligiblePixels.length)centers.push(Array.from(rgba.slice(eligiblePixels[0]*4,eligiblePixels[0]*4+3)));
+      while(centers.length<k&&eligiblePixels.length){
+        let best=eligiblePixels[0],distance=-1;
+        for(const i of eligiblePixels){let nearest=Infinity;for(const center of centers){let d=0;for(let c=0;c<3;c++)d+=(rgba[i*4+c]-center[c])**2;nearest=Math.min(nearest,d);}if(nearest>distance){distance=nearest;best=i;}}
+        centers.push(Array.from(rgba.slice(best*4,best*4+3)));
+      }
+      if(!centers.length)return masks;
       const group=new Uint8Array(n);
       for(let pass=0;pass<6;pass++){
         const sum=Array.from({length:k},()=>[0,0,0,0]);
         for(let i=0;i<n;i++)if(eligible(i)){let best=0,dmin=Infinity;for(let j=0;j<k;j++){let d=0;for(let c=0;c<3;c++)d+=(rgba[i*4+c]-centers[j][c])**2;if(d<dmin){dmin=d;best=j;}}group[i]=best;for(let c=0;c<3;c++)sum[best][c]+=rgba[i*4+c];sum[best][3]++;}
         for(let j=0;j<k;j++)if(sum[j][3])for(let c=0;c<3;c++)centers[j][c]=sum[j][c]/sum[j][3];
       }
-      for(let i=0;i<n;i++)if(eligible(i))masks[group[i]][i]=1;
+      const minimumDistance=70*(1-clamp(sensitivity,0,100)/100);
+      const representative=[];
+      centers.forEach((center,j)=>{
+        let nearest=j,distance=Infinity;
+        for(let previous=0;previous<j;previous++){
+          const d=Math.hypot(...center.map((v,c)=>v-centers[previous][c]));
+          if(d<distance){distance=d;nearest=representative[previous];}
+        }
+        representative[j]=distance<minimumDistance?nearest:j;
+      });
+      for(let i=0;i<n;i++)if(eligible(i))masks[representative[group[i]]][i]=1;
     }else{
       let low=255,high=0;
       const luminance=i=>.2126*rgba[i*4]+.7152*rgba[i*4+1]+.0722*rgba[i*4+2];
       for(let i=0;i<n;i++)if(eligible(i)){const lum=luminance(i);low=Math.min(low,lum);high=Math.max(high,lum);}
-      const span=Math.max(1,high-low),shift=(sensitivity-50)/500;
-      for(let i=0;i<n;i++)if(eligible(i)){const j=clamp(Math.floor(((luminance(i)-low)/span+shift)*k),0,k-1);masks[j][i]=1;}
+      const span=Math.max(1,high-low),contrast=.35+.65*clamp(sensitivity,0,100)/100;
+      for(let i=0;i<n;i++)if(eligible(i)){
+        const normalized=.5+((luminance(i)-low)/span-.5)*contrast;
+        const j=clamp(Math.floor(normalized*k),0,k-1);masks[j][i]=1;
+      }
     }
     return masks;
   }
